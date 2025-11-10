@@ -1,494 +1,480 @@
-const DISABLE = 0
-
+const { existsSync, readFileSync, rmSync, mkdirSync, writeFileSync } = require('fs');
+const { join, resolve } = require('path');
+const { execSync } = require('child_process');
+const { Worker, isMainThread, parentPort } = require('worker_threads');
 const express = require('express');
-const json = require('body-parser').json;
-const child_process = require('child_process');
-const worker_threads = require('worker_threads');
-const fs = require('fs');
+const { json } = require('body-parser');
 const { getRemoteIP, getWebsiteUrl } = require('./utils.js');
 const https = require('https');
 const http = require('http');
+const disk = require('node-disk-info');
 
-const config = require('./config.json'); // 加载配置文件
+// 配置与常量定义
+const config = require('./config.json');
+const TMP_DIR = resolveLongPath(join(__dirname, 'tmp'));
+const BILI_DIR = resolveLongPath(join(__dirname, 'bilibili'));
+const BLACKLIST_PATH = resolve(__dirname, config.blacklist || 'blacklist.txt');
+const COOKIE_PATH = config.cookie ? resolve(__dirname, config.cookie) : null;
 
-/*======================================================================================
-main 主线程
-========================================================================================*/
-function main() {
-    let app = new express();
+const YT_DLP_PATH = config.ytDlpPath ? resolve(__dirname, config.ytDlpPath) : 'yt-dlp';
+const FFMPEG_PATH = config.ffmpegPath ? resolve(__dirname, config.ffmpegPath) : 'ffmpeg';
+
+// 强制转码为H.264编码的MP4格式
+const FORCE_RECODE_FORMAT = 'mp4';
+const FORCE_VIDEO_CODEC = 'h264';
+const TASK_TIMEOUT = {
+    PARSE: 60000,
+    DOWNLOAD: 3600000, // 延长下载超时时间（60分钟），因为增加了转码步骤
+    SUBTITLE: 30000
+};
+
+// 初始化目录
+[TMP_DIR, BILI_DIR].forEach(dir => {
+    if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+    }
+});
+
+// 工具函数
+function resolveLongPath(path) {
+    if (process.platform === 'win32') {
+        const resolved = resolve(path);
+        return resolved.startsWith('\\\\?\\') ? resolved : `\\\\?\\${resolved}`;
+    }
+    return resolve(path);
+}
+
+// 主线程逻辑
+if (isMainThread) {
+    const app = express();
+    let blackIPs = loadBlacklist();
+    const downloadQueue = {};
+
+    // 中间件配置
     app.use('/y2b', (req, res, next) => {
-        if (DISABLE) {
-            res.send({
-                success: false,
-                error: `暂停使用!`,
-            });
-        } else {
-            next();
-        }
+        config.disable
+            ? res.send({ success: false, error: '服务已暂停使用' })
+            : next();
     });
+
     app.use((req, res, next) => {
-        console.log(`${getRemoteIP(req)}\t=>  ${req.url}`);
-        let isBlackIP = false;
-        try {
-            let blackIPs = fs.readFileSync(config.blacklist).toString().split(/\s/);
-            blackIPs.forEach(ip => {
-                if (getRemoteIP(req) === ip) {
-                    res.status(500);
-                    res.send(`<div style='font-size: 33vw; text-align: center'>500</div>`);
-                    console.log('黑名单IP！');
-                    isBlackIP = true;
-                    throw `黑名单 => ${ip}`;
-                }
-            });
-        } catch(error) {
-            //
-        }
-        if (!isBlackIP) next();
+        const clientIP = getRemoteIP(req);
+        console.log(`[${new Date().toISOString()}] ${clientIP} => ${req.url}`);
+
+        blackIPs.includes(clientIP)
+            ? res.status(500).send(`<div style='font-size: 33vw; text-align: center'>500</div>`)
+            : next();
     });
-    app.use('/', express.static(`${__dirname}/static`));
-    app.use('/file', (req, res, next) => {
-        console.log(`下载${req.url}`);
-        let info = fs.readFileSync(`${__dirname}/tmp/${req.url.replace(/\.\w+$/, '.info.json')}`).toString();
-        info = JSON.parse(info);
-        console.log({'标题': info.title}); // or 'fulltitle'
-        let ext = req.url.match(/.*(\.\w+)$/)[1];
-        res.set({'Content-Disposition': `attachment; filename="${encodeURIComponent(info.title + ext)}"; filename*=UTF-8''${encodeURI(info.title + ext)}`});
+
+    // 静态资源路由
+    app.use('/', express.static(join(__dirname, 'static')));
+    app.use('/file', setDownloadHeaders, express.static(TMP_DIR));
+    app.use('/info', express.static(TMP_DIR));
+    app.use('/bili_file', express.static(BILI_DIR));
+
+    // API 路由
+    app.get('/y2b/parse', handleParseRequest);
+    app.get('/y2b/download', handleDownloadRequest);
+    app.use(json());
+    app.post('/y2b/subtitle', handleSubtitleRequest);
+    app.get('/pxy', handleProxyRequest);
+
+    // 启动服务
+    app.listen(config.port || 2878, config.address || '127.0.0.1', () => {
+        console.log(`服务已启动，监听: http://${config.address || '127.0.0.1'}:${config.port || 2878}`);
+        console.log(`支持的功能: 强制H.264编码MP4转换 | 4K下载 | 字幕处理 | 跨平台兼容`);
+    });
+
+    // 路由处理函数
+    function setDownloadHeaders(req, res, next) {
+        console.log(`[下载请求] ${req.url}`);
+        const infoPath = join(TMP_DIR, req.url.replace(/\.\w+$/, '.info.json'));
+
+        if (existsSync(infoPath)) {
+            try {
+                const info = JSON.parse(readFileSync(infoPath, 'utf8'));
+                const ext = '.mp4'; // 强制使用mp4扩展名
+                const filename = `${info.title || 'video'}${ext}`;
+                res.setHeader('Content-Disposition',
+                    `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+            } catch (err) {
+                console.warn('文件名处理失败:', err.message);
+            }
+        }
         next();
-    });
-    app.use('/file', express.static(`${__dirname}/tmp`));
-    app.use('/info', express.static(`${__dirname}/tmp`));
-    app.use('/bili_file', express.static(`${__dirname}/bilibili`));
+    }
 
-    app.get('/y2b/parse', (req, res) => {
-        let url = req._parsedUrl.query;
-        url = decodeURIComponent(url.replace('y2b', 'youtube').replace('y2', 'youtu')); // "链接已重置"大套餐
-        console.log({ op: '解析', url });
+    function handleParseRequest(req, res) {
+        const url = decodeURIComponent(req._parsedUrl.query || '').replace('y2b', 'youtube').replace('y2', 'youtu');
+        console.log(`[解析任务] URL: ${url}`);
 
-        let y2b = url.match(/^https?:\/\/(?:youtu.be\/|(?:www|m).youtube.com\/(?:watch|shorts)(?:\/|\?v=))([\w-]{11})$/);
-        let bilibili = url.match(/^https?:\/\/(?:www\.|m\.)?bilibili\.com\/video\/([\w\d]{11,14})\/?(?:\?p=(\d+))?$/);
-        let website;
-        switch (true) {
-            case y2b != null:
-                website = 'y2b';
-                break;
-            case bilibili != null:
-                website = 'bilibili';
-                break;
+        const [y2bMatch, biliMatch] = [
+            url.match(/^https?:\/\/(?:youtu.be\/|(?:www|m).youtube.com\/(?:watch|shorts)(?:\/|\?v=))([\w-]{11})$/),
+            url.match(/^https?:\/\/(?:www\.|m\.)?bilibili\.com\/video\/([\w\d]{11,14})\/?(?:\?p=(\d+))?$/)
+        ];
+
+        if (!y2bMatch && !biliMatch) {
+            return res.send({ success: false, error: '请提供有效的YouTube或B站视频URL' });
         }
-        if (!!! website) {
-            console.log('reject');
-            res.send({
-                "error": "请提供一个Youtube视频URL<br>例如：<br>https://youtu.be/xxxxxxxxxxx<br>https://www.bilibili.com/video/xx",
-                "success": false
-            });
-            return;
+
+        checkDiskSpace();
+        startWorker({
+            op: 'parse',
+            website: y2bMatch ? 'y2b' : 'bilibili',
+            url,
+            videoID: (y2bMatch || biliMatch)[1],
+            p: biliMatch?.[2]
+        }, res);
+    }
+
+    function handleDownloadRequest(req, res) {
+        const { website, v, p, format, subs } = req.query; // 移除recode和codec参数，因为我们强制转码
+
+        if (!v?.match(/^[\w-]{11,14}$/)) {
+            return res.send({ success: false, error: '参数v错误（无效视频ID）' });
         }
-        checkDisk(); // 解析视频前先检查磁盘空间
+        if (p && !p.match(/^[\d]+$/)) {
+            return res.send({ success: false, error: '参数p错误（无效分P编号）' });
+        }
+        if (!format?.match(/^([\w\d-]+)(?:x([\w\d-]+))?$/)) {
+            return res.send({ success: false, error: '参数format格式错误（应为"视频IDx音频ID"）' });
+        }
 
-        let thread = new worker_threads.Worker(__filename);
-        thread.once('message', msg => {
-            // console.log(JSON.stringify(msg, null, 1));
-            res.send(msg);
-        });
-        thread.postMessage({ op: 'parse', website, url, videoID: (y2b || bilibili)[1], p: bilibili?.[2] });
-    });
-
-    let queue = [];
-    app.get('/y2b/download', (req, res) => {
-        let { website, v, p, format, recode, subs } = req.query;
-        if (!!!v.match(/^[\w-]{11,14}$/))
-            return res.send({ "error": "Qurey参数v错误: 请提供一个正确的Video ID", "success": false });
-
-        if (p && !!!p.match(/^[\d]+$/))
-            return res.send({ "error": "Qurey参数p错误: 请提供一个正确的Part number", "success": false });
-
-        if (!!!format.match(/^([\w\d-]+)(?:x([\w\d-]+))?$/))
-            return res.send({ "error": "Query参数format错误: 请求的音频和视频ID必须是数字, 合并格式为'视频IDx音频ID'", "success": false });
-
-        if (config.mode === '演示模式' && !!recode)
-            return res.send({ "error": "演示模式，关闭转码功能<br>本项目已使用Node.js重写<br>请克隆本项目后自行部署", "success": false });
-
-        if (subs && subs !== '' && !subs.match(/^([a-z]{2}(-[a-zA-Z]{2,4})?,?)+$/))
-            return res.send({ "error": "字幕不正确!", "success": false });
-
-        if (queue[JSON.stringify(req.query)] === undefined) {
-            checkDisk(); // 下载视频前先检查磁盘空间
-
-            queue[JSON.stringify(req.query)] = {
-                "success": true,
-                "result": {
-                    "v": v,
-                    "downloading": true,
-                    "downloadSucceed": false,
-                    "dest": "正在下载中",
-                    "metadata": ""
+        const queryKey = JSON.stringify({ website, v, p, format, subs }); // 移除recode和codec
+        if (!downloadQueue[queryKey]) {
+            checkDiskSpace();
+            downloadQueue[queryKey] = {
+                success: true,
+                result: {
+                    v,
+                    downloading: true,
+                    downloadSucceed: false,
+                    dest: '正在下载中，将自动转换为H.264编码的MP4格式',
+                    metadata: ''
                 }
             };
 
-            let thread = new worker_threads.Worker(__filename);
-            thread.once('message', msg => {
-                // 下载成功或失败，更新queue
-                console.log('下载成功或失败，更新queue');
-                console.log(JSON.stringify(msg, null, 1));
-                queue[JSON.stringify(req.query)] = msg;
-            });
-            thread.postMessage({ op: 'download', website, videoID: v, p, format, recode, subs });
-        } // if end
-        // 发送轮询结果
-        res.send(queue[JSON.stringify(req.query)]);
-    }); // /youtube/download end
+            startWorker({
+                op: 'download',
+                website,
+                videoID: v,
+                p,
+                format,
+                subs,
+                // 强制设置转码参数
+                recode: FORCE_RECODE_FORMAT,
+                codec: FORCE_VIDEO_CODEC
+            }, (msg) => downloadQueue[queryKey] = msg);
+        }
 
-    // API: 下载字幕
-    app.use(json());
-    app.post('/y2b/subtitle', (req, res) => {
-        let { website, id, p, locale, ext, type } = req.body;
+        res.send(downloadQueue[queryKey]);
+    }
 
-        if (!id.match(/^[\w-]{11,14}$/) ||
-            !ext.match(/^.(srt|ass|vtt|lrc|xml)$/) ||
-            !type.match(/^(auto|native)$/) ||
-            (p && !p.match(/^[\d]+$/)) ||
-            // !locale.match(/^([a-z]{2}(-[a-zA-Z]{2,4})?)+$/) ||
-            false
+    function handleSubtitleRequest(req, res) {
+        const { website, id, p, locale, ext, type } = req.body;
+
+        if (!id?.match(/^[\w-]{11,14}$/) ||
+            !ext?.match(/^.(srt|ass|vtt|lrc|xml)$/) ||
+            !type?.match(/^(auto|native)$/) ||
+            (p && !p.match(/^[\d]+$/))
         ) {
-            console.log('字幕请求预检被禁止, 可疑请求:', req.body);
-            res.send({ success: false });
-            return;
+            console.log('无效字幕请求:', req.body);
+            return res.send({ success: false });
         }
-        // checkDisk(); // 下载字幕前先检查磁盘空间
-        let thread = new worker_threads.Worker(__filename); // 启动子线程
-        thread.once('message', msg => {
-            let { title, filename, text } = msg;
-            // 下载字幕成功或失败
-            if (msg.success) {
-                console.log('字幕下载成功');
-                res.send({ success: true, title, filename, text });
-            } else {
-                console.log('字幕下载失败');
-                res.send({ success: false });
-            }
-        });
-        thread.postMessage({ op: 'subtitle', website, id, p, locale, ext, type });
-    }); // /youtube/subtitle end
 
-    app.get('/pxy', (req, res) => {
-        let url = req.query.url;
-        if (!url.startsWith('https://i.ytimg.com/') && !url.match(/^https?:\/\/i\d\.hdslb\.com\//)) {
-            res.status(403).end();
-            return;
+        startWorker({
+            op: 'subtitle',
+            website,
+            id,
+            p,
+            locale,
+            ext,
+            type
+        }, res);
+    }
+
+    function handleProxyRequest(req, res) {
+        const url = req.query.url;
+        if (!url?.startsWith('https://i.ytimg.com/') && !url?.match(/^https?:\/\/i\d\.hdslb\.com\//)) {
+            return res.status(403).end();
         }
-        (url.startsWith('https://') ? https : http).get(url, (response) => {
-            res.writeHead(response.statusCode, response.statusMessage, response.headers);
+
+        (url.startsWith('https') ? https : http).get(url, (response) => {
+            res.writeHead(response.statusCode, response.headers);
             response.pipe(res);
         }).on('error', (err) => {
-            console.log(err);
+            console.error('代理请求错误:', err);
             res.status(502).end();
         });
-    });
+    }
 
-    app.listen(config.port, config.address, () => {
-        console.log('服务已启动');
-    });
-
-    /**
-     * 检测磁盘空间, 必要时清理空间并清空队列queue
-     */
-    function checkDisk() {
-        let content = fs.readFileSync(config.cookie).toString();
-        if (content.trim() == '') {
-            fs.rmSync(config.cookie);
-        }
+    // 辅助函数
+    function loadBlacklist() {
         try {
-            let df = child_process.execSync(`df -h .`).toString();
-            df.split('\n').forEach(it => {
-                console.log({ '空间': it });
-                // /dev/sda2        39G   19G   19G  51% /
-                let mr = it.match(/.*\s(\d+)%/);
-                if (!!mr && Number.parseInt(mr[1]) > 90) {
-                    let cmd = `rm -r '${__dirname}/tmp' '${__dirname}/bilibili'`;
-                    console.log({ '清理空间': cmd });
-                    child_process.execSync(cmd);
-                    queue = [];
+            if (existsSync(BLACKLIST_PATH)) {
+                return readFileSync(BLACKLIST_PATH, 'utf8')
+                    .split(/\s+/)
+                    .filter(ip => ip.trim() && ip.match(/^\d+\.\d+\.\d+\.\d+$/));
+            }
+        } catch (err) {
+            console.warn('黑名单加载失败:', err.message);
+        }
+        return [];
+    }
+
+    function checkDiskSpace() {
+        try {
+            const disks = disk.getDiskInfoSync();
+            const targetDisk = disks.find(d => resolve(__dirname).startsWith(d.mountpoint));
+
+            if (targetDisk) {
+                const usedPercent = (1 - targetDisk.available / targetDisk.total) * 100;
+                console.log(`磁盘空间占用: ${usedPercent.toFixed(1)}%`);
+
+                if (usedPercent > 90) {
+                    console.log('磁盘空间不足，清理临时文件...');
+                    [TMP_DIR, BILI_DIR].forEach(dir => {
+                        if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+                        mkdirSync(dir, { recursive: true });
+                    });
+                    Object.keys(downloadQueue).forEach(key => delete downloadQueue[key]);
+                }
+            }
+        } catch (err) {
+            console.error('磁盘空间检查失败:', err.message);
+        }
+    }
+
+    function startWorker(message, callback) {
+        const worker = new Worker(__filename);
+        worker.once('message', msg => {
+            if (typeof callback === 'function') callback(msg);
+            else callback.send(msg);
+            worker.terminate().catch(err => console.warn('Worker终止失败:', err.message));
+        });
+        worker.postMessage(message);
+    }
+}
+// Worker线程逻辑
+else {
+    parentPort.once('message', (msg) => {
+        const handlers = {
+            subtitle: handleSubtitle,
+            parse: handleParse,
+            download: handleDownload
+        };
+        if (handlers[msg.op]) handlers[msg.op](msg);
+    });
+
+    function handleSubtitle({ website, id, p, locale, ext, type }) {
+        try {
+            const subDir = resolveLongPath(join(TMP_DIR, `${id}${p ? `/p${p}` : ''}`));
+            mkdirSync(subDir, { recursive: true });
+
+            const url = getWebsiteUrl(website, id, p);
+            const outputPath = resolveLongPath(join(subDir, `%(id)s.%(ext)s`));
+            const cookieParam = COOKIE_PATH && existsSync(COOKIE_PATH) ? `--cookies "${COOKIE_PATH}"` : '';
+            const subType = type === 'native' ? '--write-sub' : '--write-auto-sub';
+            const proxyParam = config.proxy ? `--proxy "${config.proxy}"` : '';
+
+            const cmd = [
+                `"${YT_DLP_PATH}" ${subType} --sub-lang "${locale}"`,
+                `-o "${outputPath}" --skip-download --write-info-json`,
+                `"${url}" ${cookieParam} ${proxyParam} 2> nul`
+            ].join(' ');
+
+            console.log(`[字幕命令] ${cmd}`);
+            execSync(cmd, { stdio: 'pipe', timeout: TASK_TIMEOUT.SUBTITLE });
+
+            const infoPath = join(subDir, `${id}.info.json`);
+            if (!existsSync(infoPath)) throw new Error('未找到字幕信息文件');
+
+            const info = JSON.parse(readFileSync(infoPath, 'utf8'));
+            const srcExt = website === 'y2b' ? 'vtt' : 'srt';
+            const srcFile = join(subDir, `${id}.${locale}.${srcExt}`);
+            const destFile = join(subDir, `${id}.${locale}${ext}`);
+
+            if (existsSync(srcFile) && srcFile !== destFile) {
+                const ffmpegCmd = `"${FFMPEG_PATH}" -i "${srcFile}" "${destFile}" -y 2> nul`;
+                console.log(`[字幕转换] ${ffmpegCmd}`);
+                execSync(ffmpegCmd, { stdio: 'pipe', timeout: TASK_TIMEOUT.SUBTITLE });
+            }
+
+            const subContent = readFileSync(destFile, 'utf8');
+            parentPort.postMessage({
+                success: true,
+                title: info.title || 'subtitle',
+                filename: `${info.title || 'subtitle'}.${locale}${ext}`,
+                text: Buffer.from(subContent).toString('base64')
+            });
+        } catch (err) {
+            const errorMsg = err.stderr?.toString() || err.message;
+            console.error('字幕处理失败:', errorMsg);
+            parentPort.postMessage({ success: false, error: errorMsg.substring(0, 200) });
+        }
+    }
+
+    function handleParse({ website, url, videoID, p }) {
+        try {
+            const cookieParam = COOKIE_PATH && existsSync(COOKIE_PATH) ? `--cookies "${COOKIE_PATH}"` : '';
+            const proxyParam = config.proxy ? `--proxy "${config.proxy}"` : '';
+            let cmd = `"${YT_DLP_PATH}" ${proxyParam} --print-json --skip-download ${cookieParam} "${url}" 2> nul`;
+
+            console.log(`[解析命令] ${cmd}`);
+            let rs = execSync(cmd, { stdio: 'pipe', timeout: TASK_TIMEOUT.PARSE }).toString().trim();
+
+            if (!rs) {
+                console.log('尝试分P解析...');
+                const pUrl = `${url}?p=1`;
+                cmd = `"${YT_DLP_PATH}" ${proxyParam} --print-json --skip-download ${cookieParam} "${pUrl}" 2> nul`;
+                rs = execSync(cmd, { stdio: 'pipe', timeout: TASK_TIMEOUT.PARSE }).toString().trim();
+            }
+
+            if (!rs) throw new Error('解析视频信息失败');
+            const info = JSON.parse(rs);
+
+            const { audios, videos } = info.formats.reduce((acc, fmt) => {
+                const size = fmt.filesize || fmt.filesize_approx || 0;
+                const sizeStr = size ? `${(size / 1024 / 1024).toFixed(2)}MB` : '未知';
+
+                if (fmt.video_ext !== 'none') {
+                    acc.videos.push({
+                        id: fmt.format_id,
+                        format: fmt.ext,
+                        codec: fmt.vcodec || '未知',
+                        scale: fmt.resolution || '未知',
+                        frame: fmt.fps ? `${fmt.fps}fps` : '未知',
+                        rate: fmt.vbr ? `${fmt.vbr.toFixed(0)}kbps` : '未知',
+                        info: fmt.format_note || '无描述',
+                        size: sizeStr
+                    });
+                } else if (fmt.audio_ext !== 'none') {
+                    acc.audios.push({
+                        id: fmt.format_id,
+                        format: fmt.ext,
+                        rate: fmt.abr ? `${fmt.abr.toFixed(0)}kbps` : '未知',
+                        info: fmt.format_note || '无描述',
+                        size: sizeStr
+                    });
+                }
+                return acc;
+            }, { audios: [], videos: [] });
+
+            const bestAudio = [...audios].sort((a, b) => b.rate.localeCompare(a.rate))[0] || {};
+            const bestVideo = [...videos].sort((a, b) => b.rate.localeCompare(a.rate))[0] || {};
+            const subs = parseSubtitle({ url });
+
+            parentPort.postMessage({
+                success: true,
+                result: {
+                    website,
+                    v: videoID,
+                    p,
+                    title: info.title,
+                    thumbnail: info.thumbnail,
+                    best: { audio: bestAudio, video: bestVideo },
+                    available: { audios, videos, subs },
+                    note: "所有视频将自动转换为H.264编码的MP4格式"
                 }
             });
-        } catch (error) {
-            //
+        } catch (err) {
+            const errorMsg = err.stderr?.toString() || err.message;
+            console.error('视频解析失败:', errorMsg);
+            parentPort.postMessage({ success: false, error: `解析失败: ${errorMsg.substring(0, 200)}` });
         }
-    } // checkDisk()
-} // main()
-
-
-
-/*======================================================================================
-Worker
-========================================================================================*/
-function getAudio(id, format, rate, info, size) {
-    return { id, format, rate: rate == 0 ? '未知' : rate, info, size: size == 0 ? '未知' : size };
-}
-
-function getVideo(id, format, scale, frame, rate, info, size) {
-    return { id, format, scale, frame, rate: rate == 0 ? '未知' : rate, info, size: size == 0 ? '未知' : size };
-}
-
-/**
- * 在以下形式的字符串中捕获字幕:
- * Language Name    Formats <= 返回0, 继续
- * gu       vtt, ttml, srv3, srv2, srv1
- * zh-Hans  vtt, ttml, srv3, srv2, srv1
- * en       English vtt, ttml, srv3, srv2, srv1, json3
- * 其它形式一律视为终结符, 返回-1, 终结
- * @param {String} line 
- */
-function catchSubtitle(line) {
-    if (line.match(/^Language .*/)) return 0;
-    let mr = line.match(/^(danmaku|[a-z]{2}(?:-[a-zA-Z]+)?).*/);
-    if (mr) return mr[1];
-    return -1;
-}
-
-/**
- * 同步解析字幕
- * @param {{ op: 'parse', url: String, videoID: String }} msg 
- */
-function parseSubtitle(msg) {
-    try {
-        let cmd = `yt-dlp --list-subs ${config.cookie !== undefined ? `--cookies "${config.cookie}"` : ''} '${msg.url}' 2> /dev/null`
-        console.log(`解析字幕, 命令: ${cmd}`);
-        let rs = child_process.execSync(cmd).toString().split(/(\r\n|\n)/);
-
-        /** 是否没有自动字幕 */
-        let noAutoSub = true;
-        let officialSub = [];
-
-        for (let i = 0; i < rs.length; i ++ ) {
-            if (rs[i].trim() === '' || rs[i].trim() === '\n') continue; // 空行直接忽略
-            // console.log('=>  ', rs[i]);
-            // 排除一下连自动字幕都没有的, 那一定是没有任何字幕可用
-            if (rs[i].match(/.*Available automatic captions for .*?:/)) { // ?表示非贪婪, 遇到冒号即停止
-                noAutoSub = false; // 排除即可, 全都是把整个字幕列表输出一遍, 这部分不需要捕获
-                continue;
-            }
-            // 解析官方字幕
-            if (rs[i].match(/.*Available subtitles for .*?:/)) {
-                FOR_J: // 打标签, 因为需要从switch中断
-                for (let j = i + 1; j < rs.length; j ++ ) {
-                    if (rs[j].trim() === '' || rs[j].trim() === '\n') continue; // 空行直接忽略
-                    sub = catchSubtitle(rs[j]);
-                    switch (sub) {
-                        case -1: { // 终结
-                            break FOR_J;
-                        }
-                        case 0: { // 继续
-                            continue;
-                        }
-                        default: { // 捕获
-                            officialSub.push(sub);
-                            break;
-                        }
-                    }
-                } // for j
-            } // if
-        } // for i
-
-        if (officialSub.length < 1) { // 没有官方字幕
-            if (noAutoSub) { // 没有任何字幕
-                console.log('没有任何字幕');
-                return [];
-            } else { // 没有官方字幕但是有自动生成字幕, 可以自动翻译为任何字幕
-                console.log('有自动生成字幕');
-                return ['auto'];
-            }
-        } else { // 有官方字幕, 同时可以自动翻译为任何字幕
-            console.log('有官方字幕');
-            console.log(JSON.stringify(officialSub, null, 0));
-            return officialSub;
-        }
-    } catch (error) {
-        console.log(error); // npm 命令无法捕获error错误流
     }
-    return [];
-}
 
-/**
- * Worker线程入口
- */
-function task() {
-    worker_threads.parentPort.once('message', msg => {
-        switch (msg.op) {
-            case 'subtitle': {
-                console.log(msg);
-                let { id, p, locale, ext, type, website } = msg;
-                // 先下载字幕
-                let fullpath = `${__dirname}/tmp/${id}${ p ? `/p${p}` : '' }`; // 字幕工作路径
-                let cmd_download = '';
-                if (type === 'native') // 原生字幕
-                    cmd_download = `yt-dlp --sub-lang '${locale}' -o '${fullpath}/%(id)s.%(ext)s' --write-sub --skip-download --write-info-json ${getWebsiteUrl(website, id, p)} ${config.cookie !== undefined ? `--cookies ${config.cookie}` : ''}`;
-                else if (type === 'auto') // 切换翻译通道
-                    cmd_download = `yt-dlp --sub-lang '${locale}' -o '${fullpath}/%(id)s.%(ext)s' --write-auto-sub --skip-download --write-info-json ${getWebsiteUrl(website, id, p)} ${config.cookie !== undefined ? `--cookies ${config.cookie}` : ''}`;
-                console.log(`下载字幕, 命令: ${cmd_download}`);
-                try {
-                    child_process.execSync(cmd_download); // 执行下载
-                    // 文件前缀
-                    let before = `${fullpath}/${id}${ p ? `_p${p}` : '' }`;
-                    // 字幕文件路径
-                    let file = `${before}.${locale}.${locale == 'danmaku' ? 'xml' : website == 'y2b' ? 'vtt' : 'srt'}`; // B站的字幕一定是srt格式, 或xml格式(B站弹幕)，y2b是vtt格式
-                    console.log('下载的字幕:', file);
-                    let file_convert = `${before}.${locale}${ext}`; // 要转换的字幕文件
-                    if (file != file_convert) {
-                        console.log('转换为:', file_convert);
-                        let cmd_ffmpeg = `ffmpeg -i '${file}' '${file_convert}' -y`; // -y 强制覆盖文件
-                        console.log(`转换字幕, 命令: ${cmd_ffmpeg}`);
-                        child_process.execSync(cmd_ffmpeg);
-                    }
-                    // info文件路径
-                    let file_info = `${before}.info.json`;
-                    console.log('info文件:', file_info);
-                    // JSON of info文件
-                    let info = JSON.parse(fs.readFileSync(file_info).toString());
-                    let title = info.title; // 视频标题
-                    console.log('视频标题:', title);
-                    let text = fs.readFileSync(file_convert).toString(); // 转换后字幕文件的文本内容
-                    worker_threads.parentPort.postMessage({ // 下载成功
-                        success: true,
-                        title, // 返回标题
-                        filename: `${title}.${locale}${ext}`, // 建议文件名
-                        text: Buffer.from(text).toString('base64'), // 字幕文本，Base64
-                    });
-                } catch(error) { // 下载过程出错
-                    console.log(error);
+    function handleDownload({ website, videoID, p, format, subs, recode, codec }) {
+        try {
+            const path = `${videoID}${p ? `/p${p}` : ''}/${format}`;
+            const downloadDir = resolveLongPath(join(TMP_DIR, path));
+            mkdirSync(downloadDir, { recursive: true });
+
+            const url = getWebsiteUrl(website, videoID, p);
+            // 输出文件名强制为MP4
+            const outputPath = resolveLongPath(join(downloadDir, `${videoID}.${FORCE_RECODE_FORMAT}`));
+            const cookieParam = COOKIE_PATH && existsSync(COOKIE_PATH) ? `--cookies "${COOKIE_PATH}"` : '';
+            const proxyParam = config.proxy ? `--proxy "${config.proxy}"` : '';
+
+            // 强制转码为H.264编码的MP4，使用更详细的ffmpeg参数确保编码正确
+            const recodeParam = `--recode ${FORCE_RECODE_FORMAT} -S vcodec:${FORCE_VIDEO_CODEC}`;
+            const formatWithFilter = `${format.replace('x', '+')}`;
+
+            const cmd = [
+                `"${YT_DLP_PATH}" ${cookieParam} ${proxyParam} "${url}" -f "${formatWithFilter}"`,
+                `-o "${outputPath}" ${recodeParam} --ffmpeg-location "${FFMPEG_PATH}"`,
+                `-k --write-info-json 2> nul`
+            ].join(' ');
+
+            console.log(`[下载命令] ${cmd}`);
+            const output = execSync(cmd, { stdio: 'pipe', timeout: TASK_TIMEOUT.DOWNLOAD });
+
+            // 强制查找MP4文件
+            const destMatch = output.toString().match(new RegExp(`${videoID}\\.${FORCE_RECODE_FORMAT}`));
+            if (!destMatch) throw new Error('未找到转换后的MP4文件');
+            const destFile = destMatch[0];
+
+            parentPort.postMessage({
+                success: true,
+                result: {
+                    v: videoID,
+                    downloading: false,
+                    downloadSucceed: true,
+                    dest: `file/${path}/${destFile}`,
+                    metadata: `info/${path}/${videoID}.info.json`,
+                    note: `已转换为${FORCE_VIDEO_CODEC}编码的${FORCE_RECODE_FORMAT}格式`
                 }
-                worker_threads.parentPort.postMessage({
-                    success: false,
-                });
-                break;
-            } // case subtitle end
-
-            case 'parse': {
-                let audios = [], videos = [];
-                let bestAudio = {}, bestVideo = {};
-
-                let rs = { title: '', thumbnail: '', formats: [] };
-                try {
-                    let cmd = `yt-dlp --print-json --skip-download ${config.cookie !== undefined ? `--cookies ${config.cookie}` : ''} '${msg.url}' 2> /dev/null`
-                    console.log('解析视频, 命令:', cmd);
-                    rs = child_process.execSync(cmd).toString();
-                    try {
-                        rs = JSON.parse(rs);
-                    } catch (error) {
-                        let cmd = `yt-dlp --print-json --skip-download ${config.cookie !== undefined ? `--cookies ${config.cookie}` : ''} '${msg.url}?p=1' 2> /dev/null`;
-                        console.log('尝试分P, 命令:', cmd);
-                        rs = child_process.execSync(cmd).toString();
-                        rs = JSON.parse(rs);
-                        msg.p = '1';
-                        msg.url = `${msg.url}?p=1`;
-                    }
-                    console.log('解析完成:', rs.title, msg.url);
-                } catch (error) {
-                    console.log(error.toString());
-                    worker_threads.parentPort.postMessage({
-                        "error": "解析失败！",
-                        "success": false
-                    });
-                    return;
+            });
+        } catch (err) {
+            const errorMsg = err.stderr?.toString() || err.message;
+            console.error('视频下载或转码失败:', errorMsg);
+            parentPort.postMessage({
+                success: true,
+                result: {
+                    v: videoID,
+                    downloading: false,
+                    downloadSucceed: false,
+                    dest: '下载或转码失败',
+                    metadata: errorMsg.substring(0, 200)
                 }
+            });
+        }
+    }
 
-                rs.formats.forEach(it => {
-                    let length = (it.filesize_approx ? '≈' : '') + ((it.filesize || it.filesize_approx || 0) / 1024 / 1024).toFixed(2);
-                    if (it.audio_ext != 'none') {
-                        audios.push(getAudio(it.format_id, it.ext, (it.abr || 0).toFixed(0), it.format_note || it.format || '', length));
-                    } else if (it.video_ext != 'none') {
-                        videos.push(getVideo(it.format_id, it.ext, it.resolution, it.height, (it.vbr || 0).toFixed(0), it.format_note || it.format || '', length));
+    function parseSubtitle({ url }) {
+        try {
+            const cookieParam = COOKIE_PATH && existsSync(COOKIE_PATH) ? `--cookies "${COOKIE_PATH}"` : '';
+            const proxyParam = config.proxy ? `--proxy "${config.proxy}"` : '';
+            const cmd = `"${YT_DLP_PATH}" ${proxyParam} --list-subs ${cookieParam} "${url}" 2> nul`;
+            console.log(`[字幕列表命令] ${cmd}`);
+            const output = execSync(cmd, { stdio: 'pipe', timeout: TASK_TIMEOUT.SUBTITLE }).toString();
+
+            let hasAutoSub = false;
+            const officialSubs = [];
+            const lines = output.split(/\r?\n/);
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+
+                if (line.includes('Available automatic captions')) {
+                    hasAutoSub = true;
+                } else if (line.includes('Available subtitles')) {
+                    for (let j = i + 1; j < lines.length; j++) {
+                        const subLine = lines[j].trim();
+                        if (!subLine) continue;
+                        const subCode = subLine.match(/^([a-z]{2}(-[A-Za-z]+)?|danmaku)/)?.[1];
+                        if (!subCode) break;
+                        if (!officialSubs.includes(subCode)) officialSubs.push(subCode);
                     }
-                });
-
-                // sort
-                // audios.sort((a, b) => a.rate - b.rate);
-                // videos.sort((a, b) => a.rate - b.rate);
-                bestAudio = Array.from(audios).sort((a, b) => a.rate - b.rate)[audios.length - 1];
-                bestVideo = Array.from(videos).sort((a, b) => a.rate - b.rate)[videos.length - 1];
-                
-                let subs = parseSubtitle(msg); // 解析字幕
-
-                worker_threads.parentPort.postMessage({
-                    "success": true,
-                    "result": {
-                        "website": msg.website,
-                        "v": msg.videoID,
-                        "p": msg.p,
-                        "title": rs.title,
-                        "thumbnail": rs.thumbnail,
-                        "best": {
-                            "audio": bestAudio,
-                            "video": bestVideo,
-                        },
-                        "available": { audios, videos, subs }
-                    }
-                });
-
-                break;
+                    break;
+                }
             }
 
-            case 'download': {
-                let { videoID, p, format, recode, subs, website } = msg; // subs字幕内封暂未实现
-                const path = `${videoID}${ p ? `/p${p}` : '' }/${format}`;
-                const fullpath = `${__dirname}/tmp/${path}`;
-                let cmd = //`cd '${__dirname}' && (cd tmp > /dev/null || (mkdir tmp && cd tmp)) &&` +
-                    `yt-dlp  ${config.cookie !== undefined ? `--cookies ${config.cookie}` : ''} ${getWebsiteUrl(website, videoID, p)} -f ${format.replace('x', '+')} ` +
-                    `-o '${fullpath}/${videoID}.%(ext)s' ${recode !== undefined ? `--recode ${recode}` : ''} -k --write-info-json`;
-                console.log('下载视频, 命令:', cmd);
-                try {
-                    let dest = 'Unknown dest';
-                    let ps = child_process.execSync(cmd).toString().split('\n');
-                    let regex = new RegExp(`^.*${fullpath}/(${videoID}\\.[\\w]+).*$`);
-                    ps.forEach(it => {
-                        console.log(it);
-                        let mr = it.match(regex);
-                        if (!!mr) {
-                            dest = mr[1];
-                        }
-                    });
-                    worker_threads.parentPort.postMessage({
-                        "success": true,
-                        "result": {
-                            "v": videoID,
-                            "downloading": false,
-                            "downloadSucceed": true,
-                            "dest": `file/${path}/${dest}`,
-                            "metadata": `info/${path}/${videoID}.info.json`
-                        }
-                    });
-                } catch (error) {
-                    let cause = 'Unknown cause';
-                    console.log({error});
-                    error.toString().split('\n').forEach(it => {
-                        console.log(it);
-                        let mr = it.match(/^.*(ERROR.*)$/);
-                        if (!!mr) {
-                            cause = mr[1];
-                        }
-                    });
-                    worker_threads.parentPort.postMessage({
-                        "success": true,
-                        "result": {
-                            "v": "demoVideoID",
-                            "downloading": false,
-                            "downloadSucceed": false,
-                            "dest": "下载失败",
-                            "metadata": cause
-                        }
-                    });
-                } // end of try
-
-                break;
-            } // end of download
-        } // end of switch
-    });
+            return officialSubs.length > 0 ? [...officialSubs, 'auto'] : hasAutoSub ? ['auto'] : [];
+        } catch (err) {
+            console.warn('解析字幕列表失败:', err.message);
+            return [];
+        }
+    }
 }
-
-/*======================================================================================
-index.js 兵分两路
-========================================================================================*/
-if (worker_threads.isMainThread)
-    main();
-else
-    task();
-/*======================================================================================*/

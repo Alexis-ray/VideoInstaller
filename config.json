@@ -1,7 +1,15 @@
 {
-	"address": "0.0.0.0",
-	"port": 80,
-	"cookie": "cookies.txt",
-	"blacklist": "blacklist.txt",
-	"mode": "非演示模式（演示模式关闭转码功能）"
+    "port": 2878,
+    "address": "127.0.0.1",
+    "blacklist": "blacklist.txt",
+    "cookie": "cookies.txt",
+    "disable": false,
+    "proxy": "http://127.0.0.1:12114",
+    "ytDlpPath": "C:/Tools/yt-dlp.exe",
+    "ffmpegPath": "C:/Tools/ffmpeg/bin/ffmpeg.exe",
+    "taskTimeout": {
+        "parse": 60000,
+        "download": 3600000,
+        "subtitle": 30000
+    }
 }
