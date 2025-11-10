@@ -1,7 +1,6 @@
 # Youtube-dl-REST
 
 通过本项目，您可以搭建一个网页，快速下载各种Youtube、Bili视频。
-在线地址：[https://y2b.455556.xyz](https://y2b.455556.xyz)
 
 
 ## 安装
