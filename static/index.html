@@ -128,24 +128,6 @@
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
 
-        .subs-container {
-            margin: 30px 0;
-            padding: 20px;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        }
-
-        .subs-toggle {
-            margin: 10px 0;
-            padding: 8px 16px;
-            background-color: var(--secondary);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
         .codec-tag {
             display: inline-block;
             padding: 3px 8px;
@@ -230,6 +212,9 @@
         <div style="text-align: center;">
             <h1 id="title">解析结果</h1>
             <img id="thumbnail" alt="视频封面">
+            <div style="margin-top: 10px;">
+                <button id="downloadCoverBtn" class="button" type="button" onclick="downloadThumbnail()">下载高清封面</button>
+            </div>
         </div>
 
         <!-- 音频列表 -->
@@ -261,32 +246,6 @@
             </tr>
         </table>
 
-        <!-- 字幕区域 -->
-        <div class="subs-container">
-            <div class="available">字幕</div>
-            <div id="title_subs" style="margin: 15px 0;"></div>
-
-            <div id="native_subs">
-                <button class="subs-toggle" onclick="toggleSubs('auto')">切换到翻译字幕</button>
-                <table id="table_native_subs">
-                    <tr>
-                        <th>语言</th>
-                        <th>下载格式</th>
-                    </tr>
-                </table>
-            </div>
-
-            <div id="auto_subs" style="display: none;">
-                <button class="subs-toggle" onclick="toggleSubs('native')">切换到原生字幕</button>
-                <table id="table_auto_subs">
-                    <tr>
-                        <th>语言</th>
-                        <th>下载格式</th>
-                    </tr>
-                </table>
-            </div>
-        </div>
-
         <div style="text-align: center; margin: 30px 0;">
             <button id="mergeBtn" class="button" onclick="download()">合并并下载（自动转为H.264 MP4）</button>
         </div>
@@ -299,10 +258,6 @@
     <div class="wait-msg" id="waitDownload">
         <h3>正在下载并转码，请稍候...</h3>
     </div>
-    <div class="wait-msg" id="waitSubtitle">
-        <h3>正在处理字幕，请稍候...</h3>
-    </div>
-
     <div id="log">
         <p>更新日志：自动转换为H.264编码MP4格式、提高设备兼容性、优化转码稳定性</p>
         <p>提示：所有视频将统一转换为H.264编码的MP4格式，确保在手机、电脑等设备上兼容播放</p>
@@ -341,7 +296,7 @@
 
             // 发送解析请求
             $.ajax({
-                url: `/y2b/parse?${encodeURIComponent(url.replace('youtube', 'y2b').replace('youtu', 'y2'))}`,
+                url: `/y2b/parse?url=${encodeURIComponent(url.replace('youtube', 'y2b').replace('youtu', 'y2'))}`,
                 success: (res) => {
                     $('#waitParse').hide();
                     if (!res.success) {
@@ -365,7 +320,23 @@
         function fillResult(info) {
             // 填充基本信息
             $('#title').text(info.title || '视频信息');
-            $('#thumbnail').attr('src', getProxyImg(info.thumbnail));
+            const candidates = (info.thumbnailCandidates && info.thumbnailCandidates.length)
+                ? info.thumbnailCandidates
+                : [info.thumbnail].filter(Boolean);
+            const proxyCandidates = candidates.map((src) => getProxyImg(src));
+            $('#thumbnail')
+                .data('candidates', proxyCandidates)
+                .data('index', 0)
+                .off('error')
+                .on('error', function () {
+                    const list = $(this).data('candidates') || [];
+                    let index = Number($(this).data('index') || 0) + 1;
+                    if (index < list.length) {
+                        $(this).data('index', index).attr('src', list[index]);
+                    }
+                });
+            $('#thumbnail').attr('src', proxyCandidates[0] || '');
+            $('#downloadCoverBtn').data('thumbnail-src', candidates[0] || info.thumbnail || '');
 
             // 填充音频列表
             const audioTable = $('#audios');
@@ -411,61 +382,6 @@
                 videoTable.append(row);
             });
 
-            // 填充字幕列表
-            fillSubtitles(info.available.subs, info.website);
-        }
-
-        /**
-         * 填充字幕列表
-         */
-        function fillSubtitles(subs, website) {
-            if (subs.length === 0) {
-                $('#title_subs').text('该视频无可用字幕');
-                $('#native_subs, #auto_subs').hide();
-                return;
-            }
-
-            // 原生字幕
-            const nativeSubs = subs.filter(s => s !== 'auto');
-            const nativeTable = $('#table_native_subs');
-            nativeTable.find('tr:gt(0)').remove();
-            nativeSubs.forEach(lang => {
-                const formats = lang === 'danmaku' ? ['.xml'] : ['.srt', '.ass', '.vtt', '.lrc'];
-                const formatLinks = formats.map(ext =>
-                    `<a class="download-link" href="javascript:downloadSub('${lang}', '${ext}', 'native')">${ext}</a>`
-                ).join(' | ');
-                nativeTable.append(`
-                    <tr>
-                        <td>${lang}${getLangName(lang)}</td>
-                        <td>${formatLinks}</td>
-                    </tr>
-                `);
-            });
-
-            // 翻译字幕
-            const autoTable = $('#table_auto_subs');
-            autoTable.find('tr:gt(0)').remove();
-            const autoLangs = ['zh-Hans', 'zh-Hant', 'en', 'ja', 'ko'];
-            autoLangs.forEach(lang => {
-                const formatLinks = ['.srt', '.ass', '.vtt', '.lrc'].map(ext =>
-                    `<a class="download-link" href="javascript:downloadSub('${lang}', '${ext}', 'auto')">${ext}</a>`
-                ).join(' | ');
-                autoTable.append(`
-                    <tr>
-                        <td>${lang}${getLangName(lang)}</td>
-                        <td>${formatLinks}</td>
-                    </tr>
-                `);
-            });
-
-            // 显示字幕标题
-            if (nativeSubs.length > 0) {
-                $('#title_subs').text('原生字幕（可切换至翻译字幕）');
-                $('#native_subs').show();
-            } else {
-                $('#title_subs').text('仅支持自动翻译字幕');
-                toggleSubs('auto'); // 自动切换到翻译字幕
-            }
         }
 
         /**
@@ -531,58 +447,6 @@
         }
 
         /**
-         * 下载字幕
-         */
-        function downloadSub(lang, ext, type) {
-            if (!videoInfo) return;
-            $('#waitSubtitle').show();
-
-            $.ajax({
-                url: '/y2b/subtitle',
-                method: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({
-                    website: videoInfo.website,
-                    id: videoInfo.v,
-                    p: videoInfo.p,
-                    locale: lang,
-                    ext: ext,
-                    type: type
-                }),
-                success: (res) => {
-                    $('#waitSubtitle').hide();
-                    if (res.success) {
-                        const a = document.createElement('a');
-                        a.download = res.filename;
-                        a.href = `data:application/octet-stream;base64,${res.text}`;
-                        a.click();
-                    } else {
-                        alert(`字幕下载失败：${res.error}`);
-                    }
-                },
-                error: () => {
-                    $('#waitSubtitle').hide();
-                    alert('字幕请求失败');
-                }
-            });
-        }
-
-        /**
-         * 切换字幕类型（原生/翻译）
-         */
-        function toggleSubs(type) {
-            if (type === 'auto') {
-                $('#native_subs').hide();
-                $('#auto_subs').show();
-                $('#title_subs').text('翻译字幕（可切换至原生字幕）');
-            } else {
-                $('#auto_subs').hide();
-                $('#native_subs').show();
-                $('#title_subs').text('原生字幕（可切换至翻译字幕）');
-            }
-        }
-
-        /**
          * 代理封面图片
          */
         function getProxyImg(src) {
@@ -590,6 +454,34 @@
                 return `/pxy?url=${encodeURIComponent(src)}`;
             }
             return src;
+        }
+
+        function buildThumbnailEndpoint(info, download) {
+            const params = new URLSearchParams({
+                website: info.website || '',
+                v: info.v || '',
+                src: info.thumbnail || '',
+                download: download ? '1' : '0',
+                t: String(Date.now())
+            });
+            return `/y2b/thumbnail?${params.toString()}`;
+        }
+
+        function downloadThumbnail() {
+            if (!videoInfo) return;
+            const src = $('#downloadCoverBtn').data('thumbnail-src') || videoInfo.thumbnail || '';
+            if (!src) {
+                alert('当前没有可用封面图');
+                return;
+            }
+            const params = new URLSearchParams({
+                website: videoInfo.website || '',
+                v: videoInfo.v || '',
+                src,
+                download: '1',
+                t: String(Date.now())
+            });
+            window.open(`/y2b/thumbnail?${params.toString()}`, '_blank');
         }
 
         /**
@@ -606,23 +498,6 @@
             return codecMap[mainCodec] || mainCodec;
         }
 
-        /**
-         * 格式化语言名称
-         */
-        function getLangName(code) {
-            const langMap = {
-                'zh-Hans': '（中文简体）',
-                'zh-Hant': '（中文繁体）',
-                'zh-TW': '（中文台湾）',
-                'en': '（英语）',
-                'ja': '（日语）',
-                'ko': '（韩语）',
-                'fr': '（法语）',
-                'ru': '（俄语）',
-                'danmaku': '（弹幕）'
-            };
-            return langMap[code] || '';
-        }
     </script>
 </body>
 

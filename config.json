@@ -1,15 +1,18 @@
 {
     "port": 2878,
     "address": "127.0.0.1",
+    "tmpDir": "tmp",
     "blacklist": "blacklist.txt",
     "cookie": "cookies.txt",
     "disable": false,
-    "proxy": "http://127.0.0.1:12114",
+    "proxy": "http://127.0.0.1:7987",
+    "proxyFallbackDirect": true,
     "ytDlpPath": "C:/Tools/yt-dlp.exe",
     "ffmpegPath": "C:/Tools/ffmpeg/bin/ffmpeg.exe",
+    "thumbnailTimeout": 8000,
     "taskTimeout": {
         "parse": 60000,
-        "download": 3600000,
-        "subtitle": 30000
-    }
+        "download": 3600000
+    },
+    "diskCleanupThreshold": 90
 }
