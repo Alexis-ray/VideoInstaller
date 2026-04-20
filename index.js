@@ -1,5 +1,5 @@
-const { existsSync, readFileSync, rmSync, mkdirSync, readdirSync, statSync } = require('fs');
-const { join, resolve } = require('path');
+const { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync, statSync } = require('fs');
+const { join, resolve, extname } = require('path');
 const { spawnSync } = require('child_process');
 const { Worker, isMainThread, parentPort } = require('worker_threads');
 const express = require('express');
@@ -80,7 +80,8 @@ if (isMainThread) {
         if (existsSync(infoPath)) {
             try {
                 const info = JSON.parse(readFileSync(infoPath, 'utf8'));
-                const filename = `${info.title || 'video'}.mp4`;
+                const fileExt = extname(safeUrlPath) || '.mp4';
+                const filename = `${info.title || 'video'}${fileExt}`;
                 res.setHeader(
                     'Content-Disposition',
                     `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
@@ -117,11 +118,12 @@ if (isMainThread) {
         try {
             const website = String(req.query.website || '').trim();
             const videoID = String(req.query.v || '').trim();
+            const title = String(req.query.title || '').trim();
             const sourceThumbnail = String(req.query.src || '').trim();
-            const shouldDownload = String(req.query.download || '0') === '1';
+            const shouldSave = String(req.query.save || req.query.download || '0') === '1';
 
-            if (!['y2b', 'bilibili'].includes(website)) {
-                return res.status(400).send({ success: false, error: '参数website错误' });
+            if (website !== 'y2b') {
+                return res.status(400).send({ success: false, error: '当前版本仅支持 YouTube 视频封面保存' });
             }
             if (!videoID.match(/^[\w-]{11,14}$/)) {
                 return res.status(400).send({ success: false, error: '参数v错误（无效视频ID）' });
@@ -130,12 +132,23 @@ if (isMainThread) {
             const candidates = buildThumbnailCandidates(website, videoID, sourceThumbnail);
             const result = await fetchFirstAvailableImage(candidates);
 
-            if (shouldDownload) {
-                const filename = buildThumbnailFilename(website, videoID, result.url || sourceThumbnail);
-                res.setHeader(
-                    'Content-Disposition',
-                    `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-                );
+            if (shouldSave) {
+                try {
+                    const coverPath = saveThumbnailToFolder(title, videoID, result.buffer, result.url || sourceThumbnail);
+                    return res.send({
+                        success: true,
+                        result: {
+                            saved: true,
+                            path: coverPath,
+                            dest: `file/${toUrlPath(coverPath.replace(`${TMP_DIR}\\`, '').replace(`${TMP_DIR}/`, ''))}`
+                        }
+                    });
+                } catch (saveErr) {
+                    return res.status(500).send({
+                        success: false,
+                        error: `封面保存失败: ${safeError(saveErr).substring(0, 200)}`
+                    });
+                }
             }
 
             res.setHeader('Content-Type', result.contentType || 'image/jpeg');
@@ -163,30 +176,44 @@ if (isMainThread) {
             : (req._parsedUrl.query || '');
         const url = decodeURIComponent(rawInput).replace('y2b', 'youtube').replace('y2', 'youtu');
 
-        const [y2bMatch, biliMatch] = [
+        const [y2bMatch] = [
             url.match(/^https?:\/\/(?:youtu\.be\/|(?:www|m)\.youtube\.com\/(?:watch|shorts)(?:\/|\?v=))([\w-]{11})/),
-            url.match(/^https?:\/\/(?:www\.|m\.)?bilibili\.com\/video\/([\w\d]{11,14})\/?(?:\?p=(\d+))?$/)
         ];
 
-        if (!y2bMatch && !biliMatch) {
-            return res.send({ success: false, error: '请提供有效的 YouTube 或 Bilibili 视频 URL' });
+        if (!y2bMatch) {
+            return res.send({ success: false, error: '请提供有效的 YouTube 视频 URL' });
         }
 
         checkDiskSpace(downloadQueue);
+
+        const timeout = setTimeout(() => {
+            if (!res.headersSent) {
+                res.send({ success: false, error: '解析超时，请重试或检查代理/网络' });
+            }
+        }, TASK_TIMEOUT.PARSE + 5000);
+
         startWorker({
             op: 'parse',
-            website: y2bMatch ? 'y2b' : 'bilibili',
+            website: 'y2b',
             url,
-            videoID: (y2bMatch || biliMatch)[1],
-            p: biliMatch?.[2]
-        }, res);
+            videoID: y2bMatch[1],
+            p: null
+        }, (msg) => {
+            if (!res.headersSent) {
+                clearTimeout(timeout);
+                res.send(msg);
+            }
+        });
     }
 
     function handleDownloadRequest(req, res) {
         const { website, v, p, format } = req.query;
+        const title = String(req.query.title || '').trim();
+        const transcodeRaw = String(req.query.transcode ?? '1').trim().toLowerCase();
+        const transcode = !['0', 'false', 'no'].includes(transcodeRaw);
 
-        if (!website || !['y2b', 'bilibili'].includes(website)) {
-            return res.send({ success: false, error: '参数website错误（仅支持 y2b 或 bilibili）' });
+        if (!website || website !== 'y2b') {
+            return res.send({ success: false, error: '参数website错误（当前仅支持 y2b）' });
         }
         if (!v || !v.match(/^[\w-]{11,14}$/)) {
             return res.send({ success: false, error: '参数v错误（无效视频ID）' });
@@ -198,16 +225,19 @@ if (isMainThread) {
             return res.send({ success: false, error: '参数format格式错误（应为"视频IDx音频ID"）' });
         }
 
-        const queryKey = JSON.stringify({ website, v, p, format });
+        const queryKey = JSON.stringify({ website, v, p, format, transcode });
         if (!downloadQueue[queryKey]) {
             checkDiskSpace(downloadQueue);
             downloadQueue[queryKey] = {
                 success: true,
                 result: {
                     v,
+                    format,
+                    transcode,
+                    phase: 'downloading',
                     downloading: true,
                     downloadSucceed: false,
-                    dest: '正在下载并转换为 H.264 MP4',
+                    dest: transcode ? '正在下载原始音视频文件' : '正在下载原始文件',
                     metadata: ''
                 }
             };
@@ -216,9 +246,21 @@ if (isMainThread) {
                 op: 'download',
                 website,
                 videoID: v,
+                title,
                 p,
-                format
+                format,
+                transcode
             }, (msg) => {
+                if (msg?.success && msg?.result?.phase) {
+                    downloadQueue[queryKey] = msg;
+                    return;
+                }
+
+                if (msg?.success && msg?.result) {
+                    downloadQueue[queryKey] = msg;
+                    return;
+                }
+
                 downloadQueue[queryKey] = msg;
             });
         }
@@ -285,6 +327,7 @@ if (isMainThread) {
     function startWorker(message, callback) {
         const worker = new Worker(__filename);
         let settled = false;
+        const isResponse = Boolean(callback && typeof callback.send === 'function');
 
         const done = (payload) => {
             if (settled) return;
@@ -294,7 +337,13 @@ if (isMainThread) {
             worker.terminate().catch(() => {});
         };
 
-        worker.once('message', (msg) => done(msg));
+        if (isResponse) {
+            worker.once('message', (msg) => done(msg));
+        } else {
+            worker.on('message', (msg) => {
+                if (typeof callback === 'function') callback(msg);
+            });
+        }
         worker.once('error', (err) => done({ success: false, error: `Worker执行失败: ${err.message}` }));
         worker.once('exit', (code) => {
             if (!settled && code !== 0) {
@@ -321,16 +370,7 @@ if (isMainThread) {
                 url
             ], TASK_TIMEOUT.PARSE);
 
-            let info = parseAnyJsonLine(output.stdout);
-            if (!info && website === 'bilibili' && !p) {
-                const pUrl = `${url}?p=1`;
-                const fallback = runYtDlp([
-                    '--print-json',
-                    '--skip-download',
-                    pUrl
-                ], TASK_TIMEOUT.PARSE);
-                info = parseAnyJsonLine(fallback.stdout);
-            }
+            const info = parseAnyJsonLine(output.stdout);
 
             if (!info || !Array.isArray(info.formats)) {
                 throw new Error('解析视频信息失败，未返回可用格式');
@@ -355,7 +395,7 @@ if (isMainThread) {
                         audios: audios.map(dropInternalFields),
                         videos: videos.map(dropInternalFields)
                     },
-                    note: '所有视频将自动转换为H.264编码的MP4格式'
+                    note: '可选择原始格式下载，或转码为H.264 MP4下载'
                 }
             });
         } catch (err) {
@@ -366,46 +406,115 @@ if (isMainThread) {
         }
     }
 
-    function handleDownload({ website, videoID, p, format }) {
+    function handleDownload({ website, videoID, title, p, format, transcode }) {
         try {
-            const folderParts = [videoID, p ? `p${p}` : null, format].filter(Boolean);
-            const downloadDir = join(TMP_DIR, ...folderParts);
+            const fileBase = buildVideoFileBase(title, videoID, p);
+            const downloadDir = buildVideoDir(title, videoID);
             mkdirSync(downloadDir, { recursive: true });
 
             const url = getWebsiteUrl(website, videoID, p);
-            const outputTemplate = join(downloadDir, `${videoID}.%(ext)s`);
+            const outputTemplate = join(downloadDir, `${fileBase}.%(ext)s`);
             const formatWithFilter = format.replace('x', '+');
-            const postprocessorArgs = 'ffmpeg:-c:v libx264 -c:a aac -movflags +faststart';
-
-            runYtDlp([
+            const downloadArgs = [
                 url,
                 '-f', formatWithFilter,
                 '-o', outputTemplate,
-                '--recode-video', FORCE_RECODE_FORMAT,
-                '--postprocessor-args', postprocessorArgs,
-                '--ffmpeg-location', FFMPEG_PATH,
                 '--no-playlist',
                 '--write-info-json',
-                '-k'
-            ], TASK_TIMEOUT.DOWNLOAD);
-
-            const destFile = findFileName(downloadDir, new RegExp(`^${escapeRegExp(videoID)}\\.${FORCE_RECODE_FORMAT}$`, 'i'));
-            if (!destFile) {
-                throw new Error('下载完成但未找到转换后的MP4文件');
-            }
-
-            const infoFile = findFileName(downloadDir, new RegExp(`^${escapeRegExp(videoID)}\\.info\\.json$`, 'i'));
-            const relativeFolder = toUrlPath(join(...folderParts));
+                '-k',
+                '--ffmpeg-location', FFMPEG_PATH
+            ];
 
             parentPort.postMessage({
                 success: true,
                 result: {
                     v: videoID,
+                    title,
+                    format,
+                    transcode,
+                    phase: 'downloading',
+                    downloading: true,
+                    downloadSucceed: false,
+                    dest: transcode ? '正在下载原始音视频文件' : '正在下载原始文件',
+                    metadata: ''
+                }
+            });
+
+            runYtDlp(downloadArgs, TASK_TIMEOUT.DOWNLOAD);
+
+            const transcodeSource = transcode ? findTranscodeSource(downloadDir, fileBase) : null;
+            const sourceFile = transcode
+                ? transcodeSource?.videoFile
+                : findOutputMediaFile(downloadDir, fileBase);
+            if (!sourceFile) {
+                throw new Error(transcode ? '下载完成但未找到可用于转码的视频源文件' : '下载完成但未找到原始输出文件');
+            }
+
+            let destFile = sourceFile;
+
+            if (transcode) {
+                parentPort.postMessage({
+                    success: true,
+                    result: {
+                        v: videoID,
+                        title,
+                        format,
+                        transcode,
+                        phase: 'transcoding',
+                        downloading: true,
+                        downloadSucceed: false,
+                        dest: '下载完成，正在转码为 H.264 MP4',
+                        metadata: ''
+                    }
+                });
+
+                const transcodeFileName = `${fileBase}-h264.${FORCE_RECODE_FORMAT}`;
+                const ffmpegArgs = ['-y', '-i', join(downloadDir, sourceFile)];
+
+                if (transcodeSource?.audioFile) {
+                    ffmpegArgs.push(
+                        '-i', join(downloadDir, transcodeSource.audioFile),
+                        '-map', '0:v:0',
+                        '-map', '1:a:0',
+                        '-shortest'
+                    );
+                }
+
+                ffmpegArgs.push(
+                    '-c:v', 'libx264',
+                    '-c:a', 'aac',
+                    '-movflags', '+faststart',
+                    join(downloadDir, transcodeFileName)
+                );
+
+                runCommand(FFMPEG_PATH, ffmpegArgs, TASK_TIMEOUT.DOWNLOAD);
+
+                destFile = findFileName(downloadDir, new RegExp(`^${escapeRegExp(fileBase)}-h264\\.${FORCE_RECODE_FORMAT}$`, 'i')) || transcodeFileName;
+            }
+
+            if (!destFile || !existsSync(join(downloadDir, destFile))) {
+                throw new Error(transcode ? '转码完成但未找到输出的MP4文件' : '下载完成但未找到原始输出文件');
+            }
+
+            const infoFile = findFileName(downloadDir, /^(?:.+)\.info\.json$/i) || 'video.info.json';
+            const relativeFolder = toUrlPath(sanitizePathSegment(title, videoID));
+            parentPort.postMessage({
+                success: true,
+                result: {
+                    v: videoID,
+                    title,
+                    format,
+                    transcode,
+                    phase: 'completed',
                     downloading: false,
                     downloadSucceed: true,
-                    dest: `file/${toUrlPath(join(relativeFolder, destFile))}`,
-                    metadata: infoFile ? `info/${toUrlPath(join(relativeFolder, infoFile))}` : '',
-                    note: `已转换为${FORCE_VIDEO_CODEC}编码的${FORCE_RECODE_FORMAT}格式`
+                    dest: `file/${relativeFolder}/${destFile}`,
+                    video: `file/${relativeFolder}/${fileBase}-video.${destFile.split('.').pop()}`,
+                    audio: `file/${relativeFolder}/${fileBase}-audio.${destFile.split('.').pop()}`,
+                    metadata: `info/${toUrlPath(join(relativeFolder, infoFile))}`,
+                    note: transcode
+                        ? `已转换为${FORCE_VIDEO_CODEC}编码的${FORCE_RECODE_FORMAT}格式（文件后缀: -h264.mp4）`
+                        : '已按原始格式下载（未转码）'
                 }
             });
         } catch (err) {
@@ -413,9 +522,10 @@ if (isMainThread) {
                 success: true,
                 result: {
                     v: videoID,
+                    title,
                     downloading: false,
                     downloadSucceed: false,
-                    dest: '下载或转码失败',
+                    dest: transcode ? '下载或转码失败' : '下载失败',
                     metadata: safeError(err).substring(0, 300)
                 }
             });
@@ -552,6 +662,106 @@ function findFileName(dir, regex) {
     return file || null;
 }
 
+function findOutputMediaFile(dir, fileBase) {
+    if (!existsSync(dir)) return null;
+    const prefix = `${fileBase}.`;
+    const ignoredExt = new Set(['.json', '.txt', '.description', '.part', '.ytdl', '.tmp', '.temp']);
+
+    const candidates = readdirSync(dir)
+        .filter((name) => name.startsWith(prefix))
+        .filter((name) => statSync(join(dir, name)).isFile())
+        .filter((name) => {
+            const lower = name.toLowerCase();
+            if (lower.endsWith('.info.json')) return false;
+            const ext = extname(lower);
+            return !ignoredExt.has(ext);
+        })
+        .map((name) => ({
+            name,
+            mtime: statSync(join(dir, name)).mtimeMs
+        }))
+        .sort((a, b) => b.mtime - a.mtime);
+
+    return candidates[0]?.name || null;
+}
+
+function findTranscodeSource(dir, fileBase) {
+    if (!existsSync(dir)) return null;
+    const prefix = `${fileBase}.`;
+    const ignoredExt = new Set(['.json', '.txt', '.description', '.part', '.ytdl', '.tmp', '.temp']);
+    const preferredVideoExt = new Set(['.mkv', '.mp4', '.webm', '.mov']);
+    const preferredAudioExt = new Set(['.m4a', '.aac', '.opus', '.mp3', '.ogg', '.webm']);
+
+    const candidates = readdirSync(dir)
+        .filter((name) => name.startsWith(prefix))
+        .filter((name) => statSync(join(dir, name)).isFile())
+        .filter((name) => {
+            const lower = name.toLowerCase();
+            if (lower.endsWith('.info.json')) return false;
+            const ext = extname(lower);
+            return !ignoredExt.has(ext);
+        })
+        .map((name) => {
+            const fullPath = join(dir, name);
+            const stats = statSync(fullPath);
+            const stream = detectMediaStream(fullPath);
+            return {
+                name,
+                fullPath,
+                ext: extname(name).toLowerCase(),
+                size: stats.size,
+                mtime: stats.mtimeMs,
+                hasVideo: stream.hasVideo,
+                hasAudio: stream.hasAudio
+            };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+
+    const muxed = candidates.find((item) => item.hasVideo && item.hasAudio && preferredVideoExt.has(item.ext))
+        || candidates.find((item) => item.hasVideo && item.hasAudio);
+    if (muxed) {
+        return { videoFile: muxed.name, audioFile: null };
+    }
+
+    const largestContainer = [...candidates]
+        .filter((item) => preferredVideoExt.has(item.ext))
+        .sort((a, b) => b.size - a.size || b.mtime - a.mtime)[0];
+    if (largestContainer) {
+        return { videoFile: largestContainer.name, audioFile: null };
+    }
+
+    const videoOnly = candidates.find((item) => item.hasVideo && preferredVideoExt.has(item.ext))
+        || candidates.find((item) => item.hasVideo);
+    if (!videoOnly) return null;
+
+    const audioOnly = candidates.find((item) => !item.hasVideo && item.hasAudio && preferredAudioExt.has(item.ext))
+        || candidates.find((item) => !item.hasVideo && item.hasAudio);
+
+    return {
+        videoFile: videoOnly.name,
+        audioFile: audioOnly?.name || null
+    };
+}
+
+function detectMediaStream(filePath) {
+    try {
+        const result = spawnSync(FFMPEG_PATH, ['-i', filePath], {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: 15000,
+            maxBuffer: 4 * 1024 * 1024,
+            shell: false
+        });
+        const output = `${result.stderr || ''}\n${result.stdout || ''}`;
+        return {
+            hasVideo: /\bVideo:\b/i.test(output),
+            hasAudio: /\bAudio:\b/i.test(output)
+        };
+    } catch (err) {
+        return { hasVideo: false, hasAudio: false };
+    }
+}
+
 function escapeRegExp(text) {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -564,6 +774,30 @@ function safeError(err) {
     if (!err) return 'unknown error';
     if (typeof err === 'string') return err;
     return err.message || JSON.stringify(err);
+}
+
+function sanitizePathSegment(text, fallback = 'video') {
+    const normalized = String(text || '').trim()
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+        .replace(/\s+/g, ' ')
+        .replace(/[. ]+$/g, '');
+
+    const cleaned = normalized.length ? normalized : fallback;
+    return cleaned.slice(0, 120);
+}
+
+function buildVideoFileBase(title, videoID, p) {
+    const safeTitle = sanitizePathSegment(title, videoID);
+    return p ? `${safeTitle}-p${p}` : safeTitle;
+}
+
+function buildVideoDir(title, videoID) {
+    return join(TMP_DIR, sanitizePathSegment(title, videoID));
+}
+
+function buildCoverPath(title, videoID, ext = '.jpg') {
+    const normalizedExt = ext.startsWith('.') ? ext : `.${ext}`;
+    return join(buildVideoDir(title, videoID), `cover${normalizedExt}`);
 }
 
 function buildThumbnailCandidates(website, videoID, sourceThumbnail) {
@@ -587,10 +821,17 @@ function buildThumbnailCandidates(website, videoID, sourceThumbnail) {
     return [...new Set(candidates.filter(Boolean))];
 }
 
-function buildThumbnailFilename(website, videoID, sourceThumbnail) {
-    const first = buildThumbnailCandidates(website, videoID, sourceThumbnail)[0] || sourceThumbnail || '';
-    const ext = (first.match(/\.([a-z0-9]+)(?:\?|$)/i)?.[1] || 'jpg').toLowerCase();
-    return `${videoID}.${ext}`;
+function saveThumbnailToFolder(title, videoID, buffer, sourceThumbnail) {
+    const ext = `.${(sourceThumbnail?.match(/\.([a-z0-9]+)(?:\?|$)/i)?.[1] || 'jpg').toLowerCase()}`;
+    const dir = buildVideoDir(title, videoID);
+    mkdirSync(dir, { recursive: true });
+    const coverPath = buildCoverPath(title, videoID, ext);
+    writeFileSync(coverPath, buffer);
+    return coverPath;
+}
+
+function buildInfoPath(title, videoID) {
+    return join(buildVideoDir(title, videoID), 'video.info.json');
 }
 
 async function fetchFirstAvailableImage(candidates) {

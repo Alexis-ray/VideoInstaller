@@ -3,12 +3,7 @@ function getRemoteIP(request) {
 }
 
 function getWebsiteUrl(website, id, p) {
-    switch (website) {
-        case 'y2b':
-            return `https://youtu.be/${id}`;
-        case 'bilibili':
-            return `https://www.bilibili.com/video/${id}${p ? `?p=${p}` : ''}`;
-    }
+    return `https://youtu.be/${id}`;
 }
 
 module.exports = {
