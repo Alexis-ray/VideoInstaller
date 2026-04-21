@@ -1,4 +1,4 @@
-# YoutubeVideoInstaller
+# VideoInstaller
 
 Windows 下的 YouTube / Bilibili 视频解析下载器，基于 `Express + yt-dlp + ffmpeg`。
 
