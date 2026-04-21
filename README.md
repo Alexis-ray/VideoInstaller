@@ -49,8 +49,8 @@ Windows 下的 YouTube / Bilibili 视频解析下载器，基于 `Express + yt-d
 ## 安装
 
 ```powershell
-git clone https://github.com/Alexis-ray/YoutubeVideoInstaller.git
-cd YoutubeVideoInstaller
+git clone https://github.com/Alexis-ray/VideoInstaller.git
+cd VideoInstaller
 npm install
 ```
 

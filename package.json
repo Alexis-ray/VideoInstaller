@@ -16,9 +16,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/Alexis-ray/YoutubeVideoInstaller",
+  "homepage": "https://github.com/Alexis-ray/VideoInstaller",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Alexis-ray/YoutubeVideoInstaller.git"
+    "url": "https://github.com/Alexis-ray/VideoInstaller.git"
   }
 }

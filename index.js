@@ -916,7 +916,7 @@ function requestUrlWithRedirect(inputUrl, timeoutMs) {
         const req = client.request(targetUrl, {
             method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) YoutubeVideoInstaller/1.0',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VideoInstaller/1.1',
                 'Accept': '*/*'
             },
             timeout: Math.max(1000, Number(timeoutMs || 10000))
@@ -1401,7 +1401,7 @@ function downloadBinaryUrl(url, timeoutMs) {
         '--show-error',
         '--fail',
         '--max-time', String(maxTime),
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) YoutubeVideoInstaller/1.0'
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VideoInstaller/1.1'
     ];
 
     if (useProxy) {
