@@ -1,7 +1,7 @@
 {
   "name": "@develon/youtube-dl-rest",
   "version": "1.0.0",
-  "description": "Website for downloading Youtube & BiliBili videos",
+  "description": "Windows YouTube video downloader",
   "scripts": {
     "check": "node --check index.js",
     "health": "node -e \"fetch('http://127.0.0.1:2878/y2b/health').then(r=>r.text()).then(t=>console.log(t)).catch(e=>{console.error(e.message);process.exit(1);})\"",
