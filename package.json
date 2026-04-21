@@ -16,9 +16,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/develon2015/Youtube-dl-REST",
+  "homepage": "https://github.com/Alexis-ray/YoutubeVideoInstaller",
   "repository": {
     "type": "git",
-    "url": "https://github.com/develon2015/Youtube-dl-REST.git"
+    "url": "https://github.com/Alexis-ray/YoutubeVideoInstaller.git"
   }
 }

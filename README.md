@@ -47,8 +47,8 @@ Windows 下的 YouTube 视频解析下载器，基于 `Express + yt-dlp + ffmpeg
 ## 安装
 
 ```powershell
-git clone https://github.com/develon2015/Youtube-dl-REST.git
-cd Youtube-dl-REST
+git clone https://github.com/Alexis-ray/YoutubeVideoInstaller.git
+cd YoutubeVideoInstaller
 npm install
 ```
 
