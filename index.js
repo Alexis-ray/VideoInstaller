@@ -1,6 +1,6 @@
 const { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync, statSync } = require('fs');
 const { join, resolve, extname } = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { Worker, isMainThread, parentPort } = require('worker_threads');
 const express = require('express');
 const { getRemoteIP, getWebsiteUrl } = require('./utils.js');
@@ -62,6 +62,7 @@ if (isMainThread) {
     app.get('/y2b/health', handleHealthRequest);
     app.get('/y2b/parse', handleParseRequest);
     app.get('/y2b/download', handleDownloadRequest);
+    app.get('/y2b/open-folder', handleOpenFolderRequest);
     app.get('/y2b/thumbnail', handleThumbnailRequest);
     app.get('/pxy', handleProxyRequest);
 
@@ -266,6 +267,47 @@ if (isMainThread) {
         }
 
         res.send(downloadQueue[queryKey]);
+    }
+
+    function handleOpenFolderRequest(req, res) {
+        try {
+            const folder = String(req.query.folder || '').trim();
+            if (!folder) {
+                return res.send({ success: false, error: '参数folder不能为空' });
+            }
+
+            const relativeFolder = folder.replace(/^file\//i, '').replace(/^\/+/, '');
+            const targetPath = resolve(TMP_DIR, relativeFolder);
+            const targetNorm = normalizeDiskPath(targetPath);
+            const tmpNorm = normalizeDiskPath(TMP_DIR);
+
+            if (!targetNorm.startsWith(tmpNorm + '\\') && targetNorm !== tmpNorm) {
+                return res.send({ success: false, error: '仅允许打开 tmp 目录下的文件夹' });
+            }
+
+            if (!existsSync(targetPath) || !statSync(targetPath).isDirectory()) {
+                return res.send({ success: false, error: '目标文件夹不存在' });
+            }
+
+            if (!IS_WINDOWS) {
+                return res.send({ success: false, error: '当前仅支持 Windows 打开文件夹' });
+            }
+
+            openFolderInExplorer(targetPath);
+
+            res.send({
+                success: true,
+                result: {
+                    folder,
+                    opened: true
+                }
+            });
+        } catch (err) {
+            res.send({
+                success: false,
+                error: `打开文件夹失败: ${safeError(err).substring(0, 200)}`
+            });
+        }
     }
 
     function handleProxyRequest(req, res) {
@@ -498,6 +540,11 @@ if (isMainThread) {
 
             const infoFile = findFileName(downloadDir, /^(?:.+)\.info\.json$/i) || 'video.info.json';
             const relativeFolder = toUrlPath(sanitizePathSegment(title, videoID));
+
+            if (IS_WINDOWS) {
+                openFolderInExplorer(downloadDir);
+            }
+
             parentPort.postMessage({
                 success: true,
                 result: {
@@ -508,6 +555,7 @@ if (isMainThread) {
                     phase: 'completed',
                     downloading: false,
                     downloadSucceed: true,
+                    folder: `file/${relativeFolder}`,
                     dest: `file/${relativeFolder}/${destFile}`,
                     video: `file/${relativeFolder}/${fileBase}-video.${destFile.split('.').pop()}`,
                     audio: `file/${relativeFolder}/${fileBase}-audio.${destFile.split('.').pop()}`,
@@ -610,6 +658,26 @@ function runCommand(command, args, timeout) {
         stdout: result.stdout || '',
         stderr: result.stderr || ''
     };
+}
+
+function openFolderInExplorer(targetPath) {
+    if (!IS_WINDOWS) {
+        throw new Error('当前仅支持 Windows 打开文件夹');
+    }
+
+    const normalizedPath = resolve(String(targetPath || ''));
+    const explorerPath = process.env.WINDIR
+        ? join(process.env.WINDIR, 'explorer.exe')
+        : 'C:\\Windows\\explorer.exe';
+
+    const child = spawn(explorerPath, [normalizedPath], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false,
+        shell: false
+    });
+
+    child.unref();
 }
 
 function checkExternalTools() {
