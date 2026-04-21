@@ -1,20 +1,22 @@
 # YoutubeVideoInstaller
 
-Windows 下的 YouTube 视频解析下载器，基于 `Express + yt-dlp + ffmpeg`。
+Windows 下的 YouTube / Bilibili 视频解析下载器，基于 `Express + yt-dlp + ffmpeg`。
 
-当前版本：`v1.0.0`
+当前版本：`v1.1.0`
 
 更新日志：[`CHANGELOG.md`](CHANGELOG.md)
 
 ## 功能
 
-当前版本提供以下 YouTube 下载能力：
+当前版本提供以下下载能力：
 
 - 解析视频并列出可用音频 / 视频格式
 - 原始格式下载
 - 下载后转码为 H.264 MP4
 - 封面保存到视频同目录
 - 所有文件统一保存到 `tmp/<视频标题>/`
+- 支持 YouTube 与 Bilibili 视频 URL 解析
+- 支持 `b23.tv` 短链、番剧、合集、多P、分P
 - 代理支持，默认端口 `7890`
 - 支持 Cookie 文件
 - 支持健康检查接口
@@ -83,7 +85,7 @@ npm install
 - `tmpDir`：临时下载目录
 - `proxy`：代理地址
 - `proxyFallbackDirect`：代理失败时的回退策略
-- `cookie`：Cookie 文件路径
+- `cookie`：Cookie 文件路径（YouTube / Bilibili 都可复用）
 - `thumbnailTimeout`：封面抓取超时时间（毫秒）
 - `diskCleanupThreshold`：磁盘占用超过该百分比时自动清理 `tmp`
 - `ytDlpPath`：`yt-dlp` 可执行文件路径
@@ -99,6 +101,14 @@ npm install
 - 代理协议对应的访问方式
 - `config.json` 中填写正确的 `proxy` 值
 - 默认代理地址为 `http://127.0.0.1:7890`
+- 当前默认策略：YouTube 下载与封面抓取使用代理，Bilibili 下载与封面抓取默认直连
+
+## Cookie 说明
+
+- 项目默认读取根目录 `cookies.txt`
+- 对于 Bilibili，部分清晰度、会员内容、分区限制内容可能要求登录态
+- 当出现 403、权限不足、需要登录等报错时，优先更新 `cookies.txt`
+- 建议使用浏览器导出的 Netscape 格式 Cookie 文件
 
 ## 启动
 
@@ -120,9 +130,22 @@ npm run health
 ## 接口说明
 
 - `GET /y2b/health`：健康状态与工具可用性
-- `GET /y2b/parse?url=<视频链接>`：解析视频
-- `GET /y2b/download?website=y2b&v=<id>&format=<videoId>x<audioId>&transcode=0|1`：下载任务
-- `GET /y2b/thumbnail?website=y2b&v=<id>&title=<标题>&src=<封面源>&save=1`：保存封面到视频同目录
+- `GET /y2b/parse?url=<视频链接>`：解析 YouTube 或 Bilibili 视频（返回 `source` / `sourceType` / `parts`）
+- `GET /y2b/download?website=y2b|b2b&v=<id>&format=<videoId>x<audioId>&transcode=0|1&source=<源链接可选>`：下载任务
+- `GET /y2b/thumbnail?website=y2b|b2b&v=<id>&title=<标题>&src=<封面源>&save=1`：保存封面到视频同目录
+
+### 前后端同步说明
+
+- 前端会根据 `parse` 返回的 `sourceType` 显示来源标签（YouTube 标准页 / Shorts / 短链；Bilibili 视频 / 短链 / 番剧 / 合集 / 分P）
+- 前端分P切换使用 `parts` 列表并触发重新解析，下载时会透传 `source` 保持来源上下文
+- 后端下载完成态中的 `video` / `audio` 字段基于实际落盘文件检测结果返回，不再依赖固定命名拼接
+
+### Bilibili 边界支持
+
+- 支持 `b23.tv` 短链解析（服务端自动展开）
+- 支持 `video/BV...`、`video/av...`、`bangumi/play/ep...`、`bangumi/play/ss...`、`medialist/play/ml...`
+- 当解析来源为番剧/合集时，下载接口建议携带 `source` 参数以保持来源上下文
+- 分P信息会在解析结果中返回 `parts` 列表，前端可按 `p` 切换后重新解析
 
 ## 文件保存规则
 
@@ -147,5 +170,5 @@ npm run health
 
 ## 说明
 
-- 当前仓库仅对外强调 YouTube 流程
+- 当前版本支持 YouTube 与 Bilibili 的视频下载流程，已作为 `v1.1.0` 正式稳定发布
 - 如果封面图获取失败，页面会自动切换后续候选图

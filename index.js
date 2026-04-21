@@ -105,6 +105,16 @@ if (isMainThread) {
                     configured: Boolean((config.proxy || '').trim()),
                     value: config.proxy || '',
                     fallbackDirect: config.proxyFallbackDirect !== false,
+                    sitePolicy: {
+                        y2b: {
+                            proxy: getProxyForWebsite('y2b'),
+                            fallbackDirect: shouldEnableProxyFallback('y2b')
+                        },
+                        b2b: {
+                            proxy: getProxyForWebsite('b2b'),
+                            fallbackDirect: shouldEnableProxyFallback('b2b')
+                        }
+                    },
                     env: {
                         HTTP_PROXY: process.env.HTTP_PROXY || '',
                         HTTPS_PROXY: process.env.HTTPS_PROXY || ''
@@ -123,10 +133,10 @@ if (isMainThread) {
             const sourceThumbnail = String(req.query.src || '').trim();
             const shouldSave = String(req.query.save || req.query.download || '0') === '1';
 
-            if (website !== 'y2b') {
-                return res.status(400).send({ success: false, error: '当前版本仅支持 YouTube 视频封面保存' });
+            if (!isSupportedWebsite(website)) {
+                return res.status(400).send({ success: false, error: '参数website错误（仅支持 y2b / b2b）' });
             }
-            if (!videoID.match(/^[\w-]{11,14}$/)) {
+            if (!isValidVideoID(website, videoID)) {
                 return res.status(400).send({ success: false, error: '参数v错误（无效视频ID）' });
             }
 
@@ -171,18 +181,24 @@ if (isMainThread) {
         }
     }
 
-    function handleParseRequest(req, res) {
+    async function handleParseRequest(req, res) {
         const rawInput = typeof req.query.url === 'string'
             ? req.query.url
             : (req._parsedUrl.query || '');
-        const url = decodeURIComponent(rawInput).replace('y2b', 'youtube').replace('y2', 'youtu');
+        let url = normalizeInputUrl(decodeURIComponent(rawInput));
 
-        const [y2bMatch] = [
-            url.match(/^https?:\/\/(?:youtu\.be\/|(?:www|m)\.youtube\.com\/(?:watch|shorts)(?:\/|\?v=))([\w-]{11})/),
-        ];
+        if (/^https?:\/\/b23\.tv\//i.test(url)) {
+            try {
+                url = await resolveBilibiliShortUrl(url, Number(config.taskTimeout?.parse || 60000));
+            } catch (err) {
+                return res.send({ success: false, error: `短链解析失败: ${safeError(err).substring(0, 200)}` });
+            }
+        }
 
-        if (!y2bMatch) {
-            return res.send({ success: false, error: '请提供有效的 YouTube 视频 URL' });
+        const parsedTarget = parseSupportedVideoUrl(url);
+
+        if (!parsedTarget) {
+            return res.send({ success: false, error: '请提供有效的 YouTube 或 Bilibili 视频 URL' });
         }
 
         checkDiskSpace(downloadQueue);
@@ -195,10 +211,11 @@ if (isMainThread) {
 
         startWorker({
             op: 'parse',
-            website: 'y2b',
+            website: parsedTarget.website,
             url,
-            videoID: y2bMatch[1],
-            p: null
+            videoID: parsedTarget.videoID,
+            p: parsedTarget.p,
+            sourceUrl: parsedTarget.sourceUrl
         }, (msg) => {
             if (!res.headersSent) {
                 clearTimeout(timeout);
@@ -209,14 +226,15 @@ if (isMainThread) {
 
     function handleDownloadRequest(req, res) {
         const { website, v, p, format } = req.query;
+        const sourceUrl = String(req.query.source || '').trim();
         const title = String(req.query.title || '').trim();
         const transcodeRaw = String(req.query.transcode ?? '1').trim().toLowerCase();
         const transcode = !['0', 'false', 'no'].includes(transcodeRaw);
 
-        if (!website || website !== 'y2b') {
-            return res.send({ success: false, error: '参数website错误（当前仅支持 y2b）' });
+        if (!isSupportedWebsite(website)) {
+            return res.send({ success: false, error: '参数website错误（仅支持 y2b / b2b）' });
         }
-        if (!v || !v.match(/^[\w-]{11,14}$/)) {
+        if (!isValidVideoID(website, v) && !isValidWebsiteSourceUrl(website, sourceUrl)) {
             return res.send({ success: false, error: '参数v错误（无效视频ID）' });
         }
         if (p && !p.match(/^\d+$/)) {
@@ -226,7 +244,7 @@ if (isMainThread) {
             return res.send({ success: false, error: '参数format格式错误（应为"视频IDx音频ID"）' });
         }
 
-        const queryKey = JSON.stringify({ website, v, p, format, transcode });
+        const queryKey = JSON.stringify({ website, v, p, format, transcode, sourceUrl });
         if (!downloadQueue[queryKey]) {
             checkDiskSpace(downloadQueue);
             downloadQueue[queryKey] = {
@@ -250,7 +268,8 @@ if (isMainThread) {
                 title,
                 p,
                 format,
-                transcode
+                transcode,
+                sourceUrl
             }, (msg) => {
                 if (msg?.success && msg?.result?.phase) {
                     downloadQueue[queryKey] = msg;
@@ -312,7 +331,9 @@ if (isMainThread) {
 
     function handleProxyRequest(req, res) {
         const url = req.query.url;
-        if (!url?.startsWith('https://i.ytimg.com/') && !url?.match(/^https?:\/\/i\d\.hdslb\.com\//)) {
+        if (!url?.startsWith('https://i.ytimg.com/')
+            && !url?.match(/^https?:\/\/i\d\.hdslb\.com\//)
+            && !url?.match(/^https?:\/\/w\.hdslb\.com\//)) {
             return res.status(403).end();
         }
 
@@ -404,34 +425,49 @@ if (isMainThread) {
         if (handlers[msg.op]) handlers[msg.op](msg);
     });
 
-    function handleParse({ website, url, videoID, p }) {
+    function handleParse({ website, url, videoID, p, sourceUrl }) {
         try {
             const output = runYtDlp([
                 '--print-json',
                 '--skip-download',
                 url
-            ], TASK_TIMEOUT.PARSE);
+            ], TASK_TIMEOUT.PARSE, { website });
 
             const info = parseAnyJsonLine(output.stdout);
 
-            if (!info || !Array.isArray(info.formats)) {
+            const playable = resolvePlayableInfo(info, p);
+            if (!playable) {
                 throw new Error('解析视频信息失败，未返回可用格式');
             }
 
-            const { audios, videos } = parseFormats(info.formats);
+            const workingInfo = playable.info;
+            const resolvedP = playable.p;
+            const parts = playable.parts;
+
+            const resolvedVideoID = resolveVideoID(website, videoID, workingInfo, info);
+            if (!isValidVideoID(website, resolvedVideoID)) {
+                throw new Error('解析成功但未识别到有效视频ID');
+            }
+
+            const { audios, videos } = parseFormats(workingInfo.formats || []);
             const bestAudio = [...audios].sort((a, b) => b.rateValue - a.rateValue)[0] || {};
             const bestVideo = [...videos].sort((a, b) => b.height - a.height || b.rateValue - a.rateValue)[0] || {};
-            const thumbnailCandidates = buildThumbnailCandidates(website, videoID, info.thumbnail);
+            const source = resolveDownloadSourceUrl(website, sourceUrl || url, workingInfo, info, resolvedP);
+            const thumbnailCandidates = buildThumbnailCandidates(website, resolvedVideoID, workingInfo.thumbnail || info.thumbnail);
+            const sourceType = detectSourceType(website, source, resolvedP, parts);
 
             parentPort.postMessage({
                 success: true,
                 result: {
                     website,
-                    v: videoID,
-                    p,
-                    title: info.title,
-                    thumbnail: thumbnailCandidates[0] || info.thumbnail,
+                    v: resolvedVideoID,
+                    p: resolvedP,
+                    source,
+                    sourceType,
+                    title: workingInfo.title || info.title,
+                    thumbnail: thumbnailCandidates[0] || workingInfo.thumbnail || info.thumbnail,
                     thumbnailCandidates,
+                    parts,
                     best: { audio: bestAudio, video: bestVideo },
                     available: {
                         audios: audios.map(dropInternalFields),
@@ -443,18 +479,18 @@ if (isMainThread) {
         } catch (err) {
             parentPort.postMessage({
                 success: false,
-                error: `解析失败: ${safeError(err).substring(0, 300)}`
+                error: `解析失败: ${buildSiteAwareError(website, err, 'parse').substring(0, 300)}`
             });
         }
     }
 
-    function handleDownload({ website, videoID, title, p, format, transcode }) {
+    function handleDownload({ website, videoID, title, p, format, transcode, sourceUrl }) {
         try {
             const fileBase = buildVideoFileBase(title, videoID, p);
             const downloadDir = buildVideoDir(title, videoID);
             mkdirSync(downloadDir, { recursive: true });
 
-            const url = getWebsiteUrl(website, videoID, p);
+            const url = getWebsiteUrl(website, videoID, p, sourceUrl);
             const outputTemplate = join(downloadDir, `${fileBase}.%(ext)s`);
             const formatWithFilter = format.replace('x', '+');
             const downloadArgs = [
@@ -482,7 +518,7 @@ if (isMainThread) {
                 }
             });
 
-            runYtDlp(downloadArgs, TASK_TIMEOUT.DOWNLOAD);
+            runYtDlp(downloadArgs, TASK_TIMEOUT.DOWNLOAD, { website });
 
             const transcodeSource = transcode ? findTranscodeSource(downloadDir, fileBase) : null;
             const sourceFile = transcode
@@ -540,6 +576,9 @@ if (isMainThread) {
 
             const infoFile = findFileName(downloadDir, /^(?:.+)\.info\.json$/i) || 'video.info.json';
             const relativeFolder = toUrlPath(sanitizePathSegment(title, videoID));
+            const mediaFiles = transcode
+                ? buildCompletedMediaResult(downloadDir, relativeFolder, destFile, transcodeSource)
+                : buildCompletedMediaResult(downloadDir, relativeFolder, destFile, inspectDownloadedMediaFiles(downloadDir, fileBase));
 
             if (IS_WINDOWS) {
                 openFolderInExplorer(downloadDir);
@@ -557,8 +596,8 @@ if (isMainThread) {
                     downloadSucceed: true,
                     folder: `file/${relativeFolder}`,
                     dest: `file/${relativeFolder}/${destFile}`,
-                    video: `file/${relativeFolder}/${fileBase}-video.${destFile.split('.').pop()}`,
-                    audio: `file/${relativeFolder}/${fileBase}-audio.${destFile.split('.').pop()}`,
+                    video: mediaFiles.video,
+                    audio: mediaFiles.audio,
                     metadata: `info/${toUrlPath(join(relativeFolder, infoFile))}`,
                     note: transcode
                         ? `已转换为${FORCE_VIDEO_CODEC}编码的${FORCE_RECODE_FORMAT}格式（文件后缀: -h264.mp4）`
@@ -574,7 +613,7 @@ if (isMainThread) {
                     downloading: false,
                     downloadSucceed: false,
                     dest: transcode ? '下载或转码失败' : '下载失败',
-                    metadata: safeError(err).substring(0, 300)
+                    metadata: buildSiteAwareError(website, err, transcode ? 'transcode' : 'download').substring(0, 300)
                 }
             });
         }
@@ -616,25 +655,50 @@ if (isMainThread) {
 
 }
 
-function runYtDlp(args, timeout) {
+function runYtDlp(args, timeout, options = {}) {
     const cookieArgs = COOKIE_PATH && existsSync(COOKIE_PATH) ? ['--cookies', COOKIE_PATH] : [];
-    const proxyValue = String(config.proxy || '').trim();
-    const enableFallbackDirect = config.proxyFallbackDirect !== false;
+    const proxyValue = getProxyForWebsite(options.website);
+    const enableFallbackDirect = shouldEnableProxyFallback(options.website);
+    const siteArgs = getSiteYtDlpArgs(options.website);
 
     if (proxyValue) {
         try {
-            return runCommand(YT_DLP_PATH, ['--proxy', proxyValue, ...cookieArgs, ...args], timeout);
+            return runCommand(YT_DLP_PATH, ['--proxy', proxyValue, ...cookieArgs, ...siteArgs, ...args], timeout);
         } catch (err) {
             if (!enableFallbackDirect) {
                 throw err;
             }
 
             console.warn(`代理请求失败，回退直连: ${safeError(err).substring(0, 160)}`);
-            return runCommand(YT_DLP_PATH, [...cookieArgs, ...args], timeout);
+            return runCommand(YT_DLP_PATH, [...cookieArgs, ...siteArgs, ...args], timeout);
         }
     }
 
-    return runCommand(YT_DLP_PATH, [...cookieArgs, ...args], timeout);
+    return runCommand(YT_DLP_PATH, [...cookieArgs, ...siteArgs, ...args], timeout);
+}
+
+function getSiteYtDlpArgs(website) {
+    if (website === 'b2b') {
+        return [
+            '--add-header', 'Referer: https://www.bilibili.com',
+            '--add-header', 'Origin: https://www.bilibili.com'
+        ];
+    }
+    return [];
+}
+
+function getProxyForWebsite(website) {
+    if (website === 'b2b') {
+        return '';
+    }
+    return String(config.proxy || '').trim();
+}
+
+function shouldEnableProxyFallback(website) {
+    if (website === 'b2b') {
+        return false;
+    }
+    return config.proxyFallbackDirect !== false;
 }
 
 function runCommand(command, args, timeout) {
@@ -717,6 +781,305 @@ function parseAnyJsonLine(text) {
         }
     }
     return null;
+}
+
+function resolvePlayableInfo(info, requestedP) {
+    if (!info || typeof info !== 'object') return null;
+
+    if (Array.isArray(info.formats) && info.formats.length) {
+        const parts = buildPartsFromEntries(info.entries, info.webpage_url || info.original_url || info.url || '');
+        const p = normalizePartNo('b2b', requestedP, info);
+        return {
+            info,
+            p,
+            parts
+        };
+    }
+
+    const entries = Array.isArray(info.entries) ? info.entries.filter(Boolean) : [];
+    if (!entries.length) return null;
+
+    const requested = Number(requestedP || 0);
+    let chosen = requested > 0 ? entries[requested - 1] : null;
+
+    if (!chosen || !Array.isArray(chosen.formats) || !chosen.formats.length) {
+        chosen = entries.find((entry) => Array.isArray(entry.formats) && entry.formats.length) || null;
+    }
+
+    if (!chosen) return null;
+
+    const chosenP = requested > 0
+        ? requested
+        : Number(chosen?.webpage_url?.match(/[?&]p=(\d+)/i)?.[1] || chosen?.episode_number || 1);
+
+    return {
+        info: chosen,
+        p: Number.isFinite(chosenP) && chosenP > 0 ? String(chosenP) : '1',
+        parts: buildPartsFromEntries(entries, info.webpage_url || info.original_url || info.url || '')
+    };
+}
+
+function buildPartsFromEntries(entries, baseUrl) {
+    if (!Array.isArray(entries) || entries.length <= 1) return [];
+
+    return entries.map((entry, index) => {
+        const pNo = index + 1;
+        const title = String(entry?.title || '').trim() || `分P ${pNo}`;
+        const entryUrl = String(entry?.webpage_url || entry?.url || '').trim();
+        const url = entryUrl || appendPartToUrl(baseUrl, pNo);
+        return {
+            p: String(pNo),
+            title,
+            url
+        };
+    });
+}
+
+function appendPartToUrl(url, p) {
+    const base = String(url || '').trim();
+    if (!base) return '';
+    const cleaned = base.replace(/([?&])p=\d+/i, '$1').replace(/[?&]$/, '');
+    const hasQuery = cleaned.includes('?');
+    return `${cleaned}${hasQuery ? '&' : '?'}p=${p}`;
+}
+
+function resolveDownloadSourceUrl(website, inputUrl, workingInfo, rootInfo, p) {
+    if (website !== 'b2b') {
+        return String(inputUrl || '').trim();
+    }
+
+    const candidates = [
+        String(workingInfo?.webpage_url || '').trim(),
+        String(rootInfo?.webpage_url || '').trim(),
+        String(workingInfo?.original_url || '').trim(),
+        String(rootInfo?.original_url || '').trim(),
+        String(inputUrl || '').trim()
+    ].filter(Boolean);
+
+    const picked = candidates[0] || '';
+    return p ? appendPartToUrl(picked, p) : picked;
+}
+
+function detectSourceType(website, source, p, parts) {
+    const text = String(source || '').trim();
+    if (website === 'y2b') {
+        if (/^https?:\/\/youtu\.be\//i.test(text)) return 'youtube-shortlink';
+        if (/\/shorts(?:\/|\?|$)/i.test(text)) return 'youtube-short';
+        return 'youtube-watch';
+    }
+    if (/^https?:\/\/b23\.tv\//i.test(text)) return 'bilibili-short';
+    if (/\/bangumi\/play\/ep\d+/i.test(text)) return 'bilibili-bangumi-episode';
+    if (/\/bangumi\/play\/ss\d+/i.test(text)) return 'bilibili-bangumi-season';
+    if (/\/medialist\/play\/ml\d+/i.test(text)) return 'bilibili-medialist';
+    if (Array.isArray(parts) && parts.length > 1) return 'bilibili-multi-part';
+    if (p) return 'bilibili-part';
+    return 'bilibili-video';
+}
+
+function normalizeInputUrl(url) {
+    return String(url || '')
+        .trim()
+        .replace('y2b', 'youtube')
+        .replace('y2', 'youtu');
+}
+
+async function resolveBilibiliShortUrl(shortUrl, timeoutMs) {
+    const maxRedirects = 6;
+    let current = String(shortUrl || '').trim();
+    if (!current) {
+        throw new Error('短链为空');
+    }
+
+    for (let i = 0; i < maxRedirects; i += 1) {
+        const result = await requestUrlWithRedirect(current, timeoutMs);
+        const nextUrl = result.location;
+        if (!nextUrl) {
+            return result.finalUrl || current;
+        }
+        current = nextUrl;
+    }
+
+    return current;
+}
+
+function requestUrlWithRedirect(inputUrl, timeoutMs) {
+    return new Promise((resolvePromise, rejectPromise) => {
+        let targetUrl;
+        try {
+            targetUrl = new URL(inputUrl);
+        } catch (err) {
+            rejectPromise(new Error('无效URL'));
+            return;
+        }
+
+        const client = targetUrl.protocol === 'http:' ? http : https;
+        const req = client.request(targetUrl, {
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) YoutubeVideoInstaller/1.0',
+                'Accept': '*/*'
+            },
+            timeout: Math.max(1000, Number(timeoutMs || 10000))
+        }, (resp) => {
+            const statusCode = Number(resp.statusCode || 0);
+            const location = String(resp.headers.location || '').trim();
+            resp.resume();
+
+            if (statusCode >= 300 && statusCode < 400 && location) {
+                const nextUrl = new URL(location, targetUrl).toString();
+                return resolvePromise({ location: nextUrl, finalUrl: targetUrl.toString() });
+            }
+
+            resolvePromise({ location: '', finalUrl: targetUrl.toString() });
+        });
+
+        req.on('timeout', () => {
+            req.destroy(new Error('请求超时'));
+        });
+        req.on('error', (err) => rejectPromise(err));
+        req.end();
+    });
+}
+
+function parseSupportedVideoUrl(url) {
+    const input = String(url || '').trim();
+    if (!input) return null;
+
+    const y2bMatch = input.match(/^https?:\/\/(?:youtu\.be\/|(?:www|m)\.youtube\.com\/(?:watch|shorts)(?:\/|\?v=))([\w-]{11})/i);
+    if (y2bMatch) {
+        const sourceType = /^https?:\/\/youtu\.be\//i.test(input)
+            ? 'youtube-shortlink'
+            : (/\/shorts(?:\/|\?|$)/i.test(input) ? 'youtube-short' : 'youtube-watch');
+        return {
+            website: 'y2b',
+            videoID: y2bMatch[1],
+            p: null,
+            sourceUrl: input,
+            sourceType
+        };
+    }
+
+    const b2bMatch = input.match(/^https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[0-9A-Za-z]{10}|av\d+)/i);
+    if (b2bMatch) {
+        const pMatch = input.match(/[?&]p=(\d+)/i);
+        return {
+            website: 'b2b',
+            videoID: b2bMatch[1],
+            p: pMatch ? String(Number(pMatch[1])) : null,
+            sourceUrl: input
+        };
+    }
+
+    const bangumiMatch = input.match(/^https?:\/\/(?:www\.)?bilibili\.com\/bangumi\/play\/(ep\d+|ss\d+)/i);
+    if (bangumiMatch) {
+        return {
+            website: 'b2b',
+            videoID: bangumiMatch[1],
+            p: null,
+            sourceUrl: input
+        };
+    }
+
+    const mediaListMatch = input.match(/^https?:\/\/(?:www\.)?bilibili\.com\/medialist\/play\/(ml\d+)/i);
+    if (mediaListMatch) {
+        return {
+            website: 'b2b',
+            videoID: mediaListMatch[1],
+            p: null,
+            sourceUrl: input
+        };
+    }
+
+    if (/^https?:\/\/(?:www\.)?bilibili\.com\//i.test(input)) {
+        return {
+            website: 'b2b',
+            videoID: extractBilibiliIDFromUrl(input),
+            p: null,
+            sourceUrl: input
+        };
+    }
+
+    return null;
+}
+
+function isSupportedWebsite(website) {
+    return website === 'y2b' || website === 'b2b';
+}
+
+function isValidVideoID(website, videoID) {
+    const id = String(videoID || '').trim();
+    if (!id) return false;
+    if (website === 'y2b') return /^[\w-]{11,14}$/.test(id);
+    if (website === 'b2b') return /^(BV[0-9A-Za-z]{10}|av\d+|ep\d+|ss\d+|md\d+|ml\d+)$/i.test(id);
+    return false;
+}
+
+function isValidWebsiteSourceUrl(website, sourceUrl) {
+    const url = String(sourceUrl || '').trim();
+    if (!url) return false;
+    if (website === 'y2b') {
+        return /^https?:\/\/(?:youtu\.be\/|(?:www|m)\.youtube\.com\/)/i.test(url);
+    }
+    if (website === 'b2b') {
+        return /^https?:\/\/(?:b23\.tv\/|(?:www\.)?bilibili\.com\/)/i.test(url);
+    }
+    return false;
+}
+
+function extractBilibiliIDFromUrl(url) {
+    const text = String(url || '').trim();
+    const match = text.match(/(?:\/video\/)(BV[0-9A-Za-z]{10}|av\d+)|(?:\/bangumi\/play\/)(ep\d+|ss\d+)|(?:\/medialist\/play\/)(ml\d+)/i);
+    if (!match) return '';
+    return (match[1] || match[2] || match[3] || '').trim();
+}
+
+function normalizePartNo(website, p, info) {
+    if (website !== 'b2b') return p || null;
+
+    const pages = Array.isArray(info.entries) ? info.entries : [];
+    if (!pages.length) return p || null;
+
+    const requested = Number(p || 0);
+    if (requested > 0) return String(requested);
+
+    const pageNo = Number(info?.webpage_url?.match(/[?&]p=(\d+)/i)?.[1] || 0);
+    return pageNo > 0 ? String(pageNo) : '1';
+}
+
+function resolveVideoID(website, requestedVideoID, info, rootInfo) {
+    const requested = String(requestedVideoID || '').trim();
+    if (isValidVideoID(website, requested)) {
+        return requested;
+    }
+
+    const infoID = String(info?.id || '').trim();
+    if (isValidVideoID(website, infoID)) {
+        return infoID;
+    }
+
+    const rootID = String(rootInfo?.id || '').trim();
+    if (isValidVideoID(website, rootID)) {
+        return rootID;
+    }
+
+    if (website === 'b2b') {
+        const candidates = [
+            String(info?.webpage_url || '').trim(),
+            String(rootInfo?.webpage_url || '').trim(),
+            String(info?.original_url || '').trim(),
+            String(rootInfo?.original_url || '').trim(),
+            String(info?.url || '').trim(),
+            String(rootInfo?.url || '').trim()
+        ];
+        for (const candidate of candidates) {
+            const extracted = extractBilibiliIDFromUrl(candidate);
+            if (extracted) {
+                return extracted;
+            }
+        }
+    }
+
+    return infoID || requested;
 }
 
 function dropInternalFields(item) {
@@ -811,6 +1174,76 @@ function findTranscodeSource(dir, fileBase) {
     };
 }
 
+function inspectDownloadedMediaFiles(dir, fileBase) {
+    if (!existsSync(dir)) return { videoFile: null, audioFile: null };
+
+    const prefix = `${fileBase}.`;
+    const ignoredExt = new Set(['.json', '.txt', '.description', '.part', '.ytdl', '.tmp', '.temp']);
+    const files = readdirSync(dir)
+        .filter((name) => name.startsWith(prefix))
+        .filter((name) => statSync(join(dir, name)).isFile())
+        .filter((name) => {
+            const lower = name.toLowerCase();
+            if (lower.endsWith('.info.json')) return false;
+            return !ignoredExt.has(extname(lower));
+        })
+        .map((name) => {
+            const stream = detectMediaStream(join(dir, name));
+            return {
+                name,
+                hasVideo: stream.hasVideo,
+                hasAudio: stream.hasAudio,
+                mtime: statSync(join(dir, name)).mtimeMs
+            };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+
+    const muxed = files.find((file) => file.hasVideo && file.hasAudio);
+    if (muxed) {
+        return {
+            videoFile: muxed.name,
+            audioFile: muxed.name
+        };
+    }
+
+    const videoOnly = files.find((file) => file.hasVideo);
+    const audioOnly = files.find((file) => !file.hasVideo && file.hasAudio);
+    return {
+        videoFile: videoOnly?.name || null,
+        audioFile: audioOnly?.name || null
+    };
+}
+
+function buildCompletedMediaResult(downloadDir, relativeFolder, destFile, media) {
+    const result = {
+        video: null,
+        audio: null
+    };
+
+    const videoFile = media?.videoFile && existsSync(join(downloadDir, media.videoFile))
+        ? media.videoFile
+        : null;
+    const audioFile = media?.audioFile && existsSync(join(downloadDir, media.audioFile))
+        ? media.audioFile
+        : null;
+
+    if (videoFile) {
+        result.video = `file/${relativeFolder}/${videoFile}`;
+    }
+    if (audioFile) {
+        result.audio = `file/${relativeFolder}/${audioFile}`;
+    }
+
+    if (!result.video && destFile) {
+        result.video = `file/${relativeFolder}/${destFile}`;
+    }
+    if (!result.audio && destFile && !result.video) {
+        result.audio = `file/${relativeFolder}/${destFile}`;
+    }
+
+    return result;
+}
+
 function detectMediaStream(filePath) {
     try {
         const result = spawnSync(FFMPEG_PATH, ['-i', filePath], {
@@ -842,6 +1275,25 @@ function safeError(err) {
     if (!err) return 'unknown error';
     if (typeof err === 'string') return err;
     return err.message || JSON.stringify(err);
+}
+
+function buildSiteAwareError(website, err, stage) {
+    const base = safeError(err);
+    if (website !== 'b2b') return base;
+
+    const lower = String(base).toLowerCase();
+    const cookieMissing = [
+        'login', 'cookie', '403', 'forbidden', 'permission',
+        '需要登录', '会员', '地区', '风控', 'access denied'
+    ].some((key) => lower.includes(key));
+
+    if (!cookieMissing) return base;
+
+    const stageText = stage === 'parse'
+        ? '解析阶段'
+        : (stage === 'transcode' ? '下载/转码阶段' : '下载阶段');
+
+    return `${base}（Bilibili ${stageText}可能需要有效 cookies.txt 或更高账号权限）`;
 }
 
 function sanitizePathSegment(text, fallback = 'video') {
@@ -883,6 +1335,12 @@ function buildThumbnailCandidates(website, videoID, sourceThumbnail) {
             `https://i.ytimg.com/vi/${videoID}/hqdefault.jpg`,
             `https://i.ytimg.com/vi/${videoID}/mqdefault.jpg`,
             `https://i.ytimg.com/vi/${videoID}/default.jpg`
+        );
+    } else if (website === 'b2b') {
+        candidates.push(
+            `https://i0.hdslb.com/bfs/archive/${videoID}.jpg`,
+            `https://i1.hdslb.com/bfs/archive/${videoID}.jpg`,
+            `https://i2.hdslb.com/bfs/archive/${videoID}.jpg`
         );
     }
 
@@ -927,12 +1385,14 @@ async function fetchFirstAvailableImage(candidates) {
 
 function isAllowedThumbnailUrl(url) {
     if (!url || typeof url !== 'string') return false;
-    return url.startsWith('https://i.ytimg.com/') || /^https?:\/\/i\d\.hdslb\.com\//.test(url);
+    return url.startsWith('https://i.ytimg.com/')
+        || /^https?:\/\/i\d\.hdslb\.com\//.test(url)
+        || /^https?:\/\/w\.hdslb\.com\//.test(url);
 }
 
 function downloadBinaryUrl(url, timeoutMs) {
-    const proxyValue = String(config.proxy || '').trim();
-    const useProxy = proxyValue && config.proxyFallbackDirect !== false;
+    const proxyValue = getProxyForUrl(url);
+    const useProxy = Boolean(proxyValue);
     const curlPath = 'curl.exe';
     const maxTime = Math.max(1, Math.ceil(Number(timeoutMs || 8000) / 1000));
     const args = [
@@ -968,6 +1428,18 @@ function downloadBinaryUrl(url, timeoutMs) {
     }
 
     return Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout || []);
+}
+
+function getProxyForUrl(url) {
+    const text = String(url || '').trim();
+    if (!text) return '';
+    if (/^https?:\/\/(?:i\.ytimg\.com|(?:www\.)?(?:youtube\.com|youtu\.be))/i.test(text)) {
+        return String(config.proxy || '').trim();
+    }
+    if (/^https?:\/\/(?:i\d\.hdslb\.com|w\.hdslb\.com|(?:www\.)?bilibili\.com|b23\.tv)/i.test(text)) {
+        return '';
+    }
+    return String(config.proxy || '').trim();
 }
 
 

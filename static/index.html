@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>视频解析下载器 | 自动转换为H.264 MP4格式</title>
+    <title>视频解析下载器 v1.1.0 | 自动转换为H.264 MP4格式</title>
     <link rel="stylesheet" href="./css/style.css">
     <style>
         :root {
@@ -179,12 +179,23 @@
             margin: 15px 0;
             font-size: 0.95rem;
         }
+
+        .source-type {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: #eef4ff;
+            color: #2d5ea8;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
     </style>
 </head>
 
 <body>
     <div class="title">
-        <div>视频解析下载器</div>
+        <div>视频解析下载器 v1.1.0</div>
         <div class="github">
             <a href="https://github.com/Alexis-ray/YoutubeVideoInstaller" target="_blank">
                 <svg style="fill: #333" height="32" viewBox="0 0 16 16" version="1.1" width="32" aria-hidden="true">
@@ -198,7 +209,7 @@
 
     <div id="divURL">
         <form name="parse" onsubmit="parse(); return false;">
-            <input class="search" id="url" name="url" type="url" placeholder="请输入 YouTube 视频 URL（可选原始下载或转码 H.264 MP4）"
+            <input class="search" id="url" name="url" type="url" placeholder="请输入 YouTube 或 Bilibili 视频 URL（可选原始下载或转码 H.264 MP4）"
                 autocomplete="off" required>
         </form>
     </div>
@@ -211,7 +222,12 @@
     <div id="divResult">
         <div style="text-align: center;">
             <h1 id="title">解析结果</h1>
+            <div id="sourceTypeBadge" class="source-type" style="display: none;"></div>
             <img id="thumbnail" alt="视频封面">
+            <div id="partSelector" style="margin-top: 12px; display: none;">
+                <label for="partSelect" style="margin-right: 8px;">分P：</label>
+                <select id="partSelect" class="search" style="max-width: 520px; height: 40px; padding: 0 10px;"></select>
+            </div>
             <div style="margin-top: 10px;">
                 <button id="downloadCoverBtn" class="button" type="button" onclick="downloadThumbnail()">保存封面到视频目录</button>
             </div>
@@ -263,8 +279,8 @@
         <h3 id="waitTranscodeText">正在转码为 H.264 MP4，请稍候...</h3>
     </div>
     <div id="log">
-        <p>更新日志：自动转换为 H.264 编码 MP4 格式、提高设备兼容性、优化转码稳定性</p>
-        <p>提示：当前版本专注于 YouTube 视频下载，所有视频可统一转换为 H.264 编码的 MP4 格式，确保在手机、电脑等设备上兼容播放</p>
+        <p>更新日志：v1.1.0 正式支持 YouTube 与 Bilibili 双站点下载，完善短链、番剧、合集、分P与来源类型展示</p>
+        <p>提示：当前版本支持 YouTube 与 Bilibili 视频下载，所有视频可统一转换为 H.264 编码的 MP4 格式，确保在手机、电脑等设备上兼容播放</p>
     </div>
 
     <script src="js/jquery.js"></script>
@@ -341,6 +357,8 @@
                 });
             $('#thumbnail').attr('src', proxyCandidates[0] || '');
             $('#downloadCoverBtn').data('thumbnail-src', candidates[0] || info.thumbnail || '');
+            bindSourceType(info);
+            bindParts(info);
 
             // 填充音频列表
             const audioTable = $('#audios');
@@ -394,7 +412,7 @@
         function downloadSingle(type, id) {
             if (!videoInfo) return;
             const url = `/y2b/download?website=${videoInfo.website}&v=${videoInfo.v}&title=${encodeURIComponent(videoInfo.title || '')}&p=${videoInfo.p || ''}&format=${id}&transcode=0`;
-            startDownload(url);
+            startDownload(appendSourceToDownloadUrl(url));
         }
 
         /**
@@ -411,7 +429,7 @@
 
             const transcodeFlag = transcode ? '1' : '0';
             const url = `/y2b/download?website=${videoInfo.website}&v=${videoInfo.v}&title=${encodeURIComponent(videoInfo.title || '')}&p=${videoInfo.p || ''}&format=${selectedVideo}x${selectedAudio}&transcode=${transcodeFlag}`;
-            startDownload(url, transcode);
+            startDownload(appendSourceToDownloadUrl(url), transcode);
         }
 
         /**
@@ -483,7 +501,7 @@
          * 代理封面图片
          */
         function getProxyImg(src) {
-            if (src?.startsWith('https://i.ytimg.com/') || src?.match(/^https?:\/\/i\d\.hdslb\.com\//)) {
+            if (src?.startsWith('https://i.ytimg.com/') || src?.match(/^https?:\/\/i\d\.hdslb\.com\//) || src?.match(/^https?:\/\/w\.hdslb\.com\//)) {
                 return `/pxy?url=${encodeURIComponent(src)}`;
             }
             return src;
@@ -526,6 +544,112 @@
                 },
                 error: () => alert('封面保存请求失败')
             });
+        }
+
+        function bindParts(info) {
+            const parts = Array.isArray(info.parts) ? info.parts : [];
+            const selector = $('#partSelector');
+            const select = $('#partSelect');
+            select.empty();
+
+            if (!parts.length) {
+                selector.hide();
+                return;
+            }
+
+            parts.forEach(part => {
+                const p = String(part.p || '');
+                const title = String(part.title || `分P ${p}`).trim();
+                const option = $('<option></option>')
+                    .val(p)
+                    .text(`P${p} - ${title}`)
+                    .data('part-url', part.url || '');
+                select.append(option);
+            });
+
+            const targetP = String(info.p || parts[0].p || '1');
+            select.val(targetP);
+            if (!select.val()) {
+                select.val(parts[0].p || '1');
+            }
+
+            selector.show();
+
+            select.off('change').on('change', function () {
+                if (!videoInfo) return;
+                const selectedP = String($(this).val() || '').trim();
+                const selectedUrl = $(this).find('option:selected').data('part-url') || '';
+                videoInfo.p = selectedP;
+                if (selectedUrl) {
+                    videoInfo.source = selectedUrl;
+                }
+                parseByCurrentSelection();
+            });
+        }
+
+        function bindSourceType(info) {
+            const badge = $('#sourceTypeBadge');
+            const label = getSourceTypeLabel(info.sourceType, info.website);
+            if (!label) {
+                badge.hide().text('');
+                return;
+            }
+            badge.text(label).show();
+        }
+
+        function getSourceTypeLabel(sourceType, website) {
+            const type = String(sourceType || '').trim();
+            if (!type) {
+                return website === 'y2b' ? '来源：YouTube 视频' : '来源：Bilibili 视频';
+            }
+
+            const labels = {
+                'youtube-watch': '来源：YouTube 标准页',
+                'youtube-short': '来源：YouTube Shorts',
+                'youtube-shortlink': '来源：YouTube 短链',
+                'bilibili-short': '来源：Bilibili 短链',
+                'bilibili-video': '来源：Bilibili 视频',
+                'bilibili-part': '来源：Bilibili 分P视频',
+                'bilibili-multi-part': '来源：Bilibili 多P视频',
+                'bilibili-bangumi-episode': '来源：Bilibili 番剧剧集',
+                'bilibili-bangumi-season': '来源：Bilibili 番剧季页',
+                'bilibili-medialist': '来源：Bilibili 合集'
+            };
+
+            return labels[type] || `来源：${type}`;
+        }
+
+        function parseByCurrentSelection() {
+            if (!videoInfo) return;
+            const source = String(videoInfo.source || '').trim();
+            if (!source) return;
+
+            $('#divResult').hide();
+            $('#waitParse').show();
+            $.ajax({
+                url: `/y2b/parse?url=${encodeURIComponent(source)}`,
+                success: (res) => {
+                    $('#waitParse').hide();
+                    if (!res.success) {
+                        alert(`分P切换失败：${res.error}`);
+                        return;
+                    }
+                    videoInfo = res.result;
+                    fillResult(videoInfo);
+                    $('#divResult').show();
+                },
+                error: (xhr) => {
+                    $('#waitParse').hide();
+                    alert(`分P切换失败：${xhr.statusText || '网络错误'}`);
+                }
+            });
+        }
+
+        function appendSourceToDownloadUrl(url) {
+            const source = String(videoInfo?.source || '').trim();
+            if (!source) return url;
+            const glue = url.includes('?') ? '&' : '?';
+            return `${url}${glue}source=${encodeURIComponent(source)}`;
         }
 
         function toDisplayPath(pathText) {
