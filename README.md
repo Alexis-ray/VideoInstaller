@@ -1,38 +1,33 @@
 # VideoInstaller
 
-Windows 下的 YouTube / Bilibili 视频解析下载器，基于 `Express + yt-dlp + ffmpeg`。
+VideoInstaller 是一个面向 Windows 本地环境的网页式视频解析下载器，基于 `Express + yt-dlp + ffmpeg` 构建，当前支持 YouTube 与 Bilibili 双站点下载。
 
-当前版本：`v1.1.0`
+当前版本：`v1.1.1`
 
-更新日志：[`CHANGELOG.md`](CHANGELOG.md)
+[更新日志](CHANGELOG.md)
 
-## 功能
+## 项目特性
 
-当前版本提供以下下载能力：
-
-- 解析视频并列出可用音频 / 视频格式
-- 原始格式下载
-- 下载后转码为 H.264 MP4
-- 封面保存到视频同目录
-- 所有文件统一保存到 `tmp/<视频标题>/`
-- 支持 YouTube 与 Bilibili 视频 URL 解析
-- 支持 `b23.tv` 短链、番剧、合集、多P、分P
-- 代理支持，默认端口 `7890`
-- 支持 Cookie 文件
-- 支持健康检查接口
+- 支持 YouTube 与 Bilibili 视频链接解析
+- 支持 `b23.tv` 短链自动展开
+- 支持 Bilibili 普通视频、多 P、番剧 `ep/ss`、合集 `ml`
+- 支持原始格式下载
+- 支持下载后转码为 H.264 MP4
+- 支持保存封面到视频目录
 - 支持下载完成后自动打开目标文件夹
-- 支持下载并转码完成后自动打开目标文件夹
+- 支持代理、Cookie 与健康检查接口
+- 所有视频相关文件统一保存到 `tmp/<视频标题>/`
 
-## 功能实现
+## 适用场景
 
-- 本地网页界面操作
-- 解析结果展示
-- 音频 / 视频格式选择
-- 支持原始下载
-- 支持下载并转码为 H.264 MP4
-- 封面保存到视频同目录
-- 下载中 / 转码中分离提示
-- 自动保留原始下载文件与最终转码文件
+这个项目适合在 Windows 本地部署，作为一个轻量、可控、可自定义配置的视频下载工具使用。
+
+你可以通过浏览器访问本地 Web UI，完成以下流程：
+
+1. 输入 YouTube 或 Bilibili 视频链接
+2. 查看可用音频 / 视频格式
+3. 选择原始下载，或下载后转码为 H.264 MP4
+4. 保存封面、查看元数据，并直接打开落盘目录
 
 ## 环境要求
 
@@ -54,7 +49,21 @@ cd VideoInstaller
 npm install
 ```
 
-## 配置
+## 快速开始
+
+1. 根据你的环境修改根目录 `config.json`
+2. 确认 `yt-dlp` 与 `ffmpeg` 可执行文件路径正确
+3. 启动服务：
+
+```powershell
+npm start
+```
+
+默认访问地址：
+
+- `http://127.0.0.1:2878`
+
+## 配置说明
 
 项目根目录下的 `config.json` 用于管理主要配置：
 
@@ -79,96 +88,154 @@ npm install
 }
 ```
 
-字段说明：
+### 关键字段
 
-- `port` / `address`：服务监听地址
-- `tmpDir`：临时下载目录
-- `proxy`：代理地址
-- `proxyFallbackDirect`：代理失败时的回退策略
-- `cookie`：Cookie 文件路径（YouTube / Bilibili 都可复用）
-- `thumbnailTimeout`：封面抓取超时时间（毫秒）
-- `diskCleanupThreshold`：磁盘占用超过该百分比时自动清理 `tmp`
-- `ytDlpPath`：`yt-dlp` 可执行文件路径
-- `ffmpegPath`：`ffmpeg` 可执行文件路径
+| 字段 | 说明 |
+| --- | --- |
+| `port` / `address` | 服务监听地址 |
+| `tmpDir` | 下载与相关文件保存目录 |
+| `blacklist` | 黑名单 IP 文件路径 |
+| `cookie` | Cookie 文件路径 |
+| `proxy` | 代理地址 |
+| `proxyFallbackDirect` | 代理失败后是否回退直连 |
+| `ytDlpPath` | `yt-dlp` 可执行文件路径 |
+| `ffmpegPath` | `ffmpeg` 可执行文件路径 |
+| `thumbnailTimeout` | 封面抓取超时时间（毫秒） |
+| `taskTimeout.parse` | 解析任务超时 |
+| `taskTimeout.download` | 下载 / 转码任务超时 |
+| `diskCleanupThreshold` | 临时目录所在磁盘占用超过该阈值时，空闲状态下自动清理 `tmp` |
 
-## 代理说明
+## 站点支持范围
 
-本项目的下载代理由后端程序直接传给 `yt-dlp` 和封面下载工具。
+### YouTube
 
-代理配置需要提供：
+- 标准视频页
+- Shorts
+- `youtu.be` 短链
 
-- 一个可用的本地代理地址
-- 代理协议对应的访问方式
-- `config.json` 中填写正确的 `proxy` 值
-- 默认代理地址为 `http://127.0.0.1:7890`
-- 当前默认策略：YouTube 下载与封面抓取使用代理，Bilibili 下载与封面抓取默认直连
+来源类型：
 
-## Cookie 说明
+- `youtube-watch`
+- `youtube-short`
+- `youtube-shortlink`
 
-- 项目默认读取根目录 `cookies.txt`
-- 对于 Bilibili，部分清晰度、会员内容、分区限制内容可能要求登录态
-- 当出现 403、权限不足、需要登录等报错时，优先更新 `cookies.txt`
-- 建议使用浏览器导出的 Netscape 格式 Cookie 文件
+### Bilibili
 
-## 启动
+- 普通视频：`video/BV...`、`video/av...`
+- 短链：`b23.tv`
+- 分 P / 多 P 视频
+- 番剧：`bangumi/play/ep...`、`bangumi/play/ss...`
+- 合集：`medialist/play/ml...`
 
-```powershell
-npm start
+来源类型：
+
+- `bilibili-video`
+- `bilibili-short`
+- `bilibili-part`
+- `bilibili-multi-part`
+- `bilibili-bangumi-episode`
+- `bilibili-bangumi-season`
+- `bilibili-medialist`
+
+## 下载与文件保存规则
+
+- 所有视频相关文件保存到 `tmp/<视频标题>/`
+- 同一目录中可能包含：视频文件、音频文件、封面图、`*.info.json` 元数据文件
+- 转码模式下会额外生成最终 `H.264 MP4` 文件
+- 下载完成后，接口返回的 `video` / `audio` 字段基于实际落盘文件检测结果生成
+
+## 代理与 Cookie 策略
+
+默认策略如下：
+
+- YouTube：默认走代理
+- Bilibili：默认直连
+
+更多细节：
+
+- 健康检查接口会返回 `sitePolicy`，可直接查看不同站点的代理策略
+- Bilibili 部分清晰度、会员内容或区域限制内容可能要求登录态
+- 建议使用浏览器导出的 Netscape 格式 `cookies.txt`
+
+## Web UI 说明
+
+前端页面支持：
+
+- 解析结果展示
+- 音频 / 视频格式选择
+- 分 P 选择与重新解析
+- 来源类型标签展示
+- 原始下载与转码下载
+- 单独流下载
+- 封面保存
+- 下载完成态结果展示
+
+## 接口说明
+
+### 健康检查
+
+```text
+GET /y2b/health
 ```
 
-启动后访问以下地址：
+返回服务运行状态、工具状态、代理配置、运行目录、Cookie 状态与当前任务信息。
 
-- `http://127.0.0.1:2878`
+### 解析视频
+
+```text
+GET /y2b/parse?url=<视频链接>
+```
+
+返回结果中会包含：
+
+- `source`
+- `sourceType`
+- `parts`
+
+### 下载视频
+
+```text
+GET /y2b/download?website=y2b|b2b&v=<id>&format=<videoId>x<audioId>&transcode=0|1&source=<源链接可选>
+```
+
+说明：
+
+- `transcode=0`：原始下载
+- `transcode=1`：下载后转码为 H.264 MP4
+- 当解析来源为番剧、合集或分 P 页面时，建议携带 `source` 参数保持来源上下文
+
+### 保存封面
+
+```text
+GET /y2b/thumbnail?website=y2b|b2b&v=<id>&title=<标题>&src=<封面源>&save=1
+```
 
 ## 常用命令
 
 ```powershell
 npm run check
 npm run health
+npm start
 ```
 
-## 接口说明
+## 发布前验证建议
 
-- `GET /y2b/health`：健康状态与工具可用性
-- `GET /y2b/parse?url=<视频链接>`：解析 YouTube 或 Bilibili 视频（返回 `source` / `sourceType` / `parts`）
-- `GET /y2b/download?website=y2b|b2b&v=<id>&format=<videoId>x<audioId>&transcode=0|1&source=<源链接可选>`：下载任务
-- `GET /y2b/thumbnail?website=y2b|b2b&v=<id>&title=<标题>&src=<封面源>&save=1`：保存封面到视频同目录
+当前项目没有独立测试套件，建议每次更新后至少完成以下检查：
 
-### 前后端同步说明
+1. 执行 `npm run check`
+2. 启动服务并访问首页
+3. 执行 `npm run health`
+4. 手动测试一个 YouTube 链接解析与下载
+5. 手动测试一个 Bilibili 链接解析与下载
+6. 验证原始下载、转码下载、封面保存与分 P 切换
 
-- 前端会根据 `parse` 返回的 `sourceType` 显示来源标签（YouTube 标准页 / Shorts / 短链；Bilibili 视频 / 短链 / 番剧 / 合集 / 分P）
-- 前端分P切换使用 `parts` 列表并触发重新解析，下载时会透传 `source` 保持来源上下文
-- 后端下载完成态中的 `video` / `audio` 字段基于实际落盘文件检测结果返回，不再依赖固定命名拼接
+## 已知说明
 
-### Bilibili 边界支持
+- 当前主要面向 Windows 场景优化
+- `.git` 中保留旧仓库名相关历史记录属于 Git 历史，不影响当前项目
+- 如果后续推送 GitHub 失败，通常是本地网络连通性问题，而非项目代码问题
 
-- 支持 `b23.tv` 短链解析（服务端自动展开）
-- 支持 `video/BV...`、`video/av...`、`bangumi/play/ep...`、`bangumi/play/ss...`、`medialist/play/ml...`
-- 当解析来源为番剧/合集时，下载接口建议携带 `source` 参数以保持来源上下文
-- 分P信息会在解析结果中返回 `parts` 列表，前端可按 `p` 切换后重新解析
+## 版本说明
 
-## 文件保存规则
-
-- 所有视频相关文件保存到 `tmp/<视频标题>/`
-- 同一目录下包含：视频文件、音频文件、封面图、`info.json`
-- 转码模式下会额外生成最终 `H.264 MP4` 文件
-- 字幕下载与自动转录不在本项目内提供
-
-## 字幕与转录
-
-如需将视频内容转为字幕或文本，可使用外部转录服务，例如：
-
-- `https://turboscribe.ai/zh-CN/dashboard`
-
-该网站支持在线视频转录，可作为补充工具使用。
-
-- 免费额度：每 24 小时 3 个任务
-- 单个任务时长限制：不超过 30 分钟
-- 付费后可获得更多转录额度
-
-建议将其作为本项目的补充工具。
-
-## 说明
-
-- 当前版本支持 YouTube 与 Bilibili 的视频下载流程，已作为 `v1.1.0` 正式稳定发布
-- 如果封面图获取失败，页面会自动切换后续候选图
+- `v1.1.0`：完成 YouTube / Bilibili 双站点能力整合
+- `v1.1.1`：聚焦稳定性、交互反馈与项目文档成品化整理

@@ -7,6 +7,7 @@ const { getRemoteIP, getWebsiteUrl } = require('./utils.js');
 const https = require('https');
 const http = require('http');
 const disk = require('node-disk-info');
+const packageInfo = require('./package.json');
 
 const config = require('./config.json');
 const IS_WINDOWS = process.platform === 'win32';
@@ -35,6 +36,15 @@ if (isMainThread) {
     let blackIPs = loadBlacklist();
     const downloadQueue = {};
     const toolStatus = checkExternalTools();
+    let lastDiskStatus = {
+        checkedAt: null,
+        action: 'idle',
+        usedPercent: null,
+        threshold: DISK_CLEANUP_THRESHOLD,
+        activeDownloads: 0,
+        tmpDir: TMP_DIR,
+        message: ''
+    };
 
     if (!IS_WINDOWS) {
         console.warn('当前版本已按 Windows 场景优化，非 Windows 环境不保证行为一致。');
@@ -75,7 +85,7 @@ if (isMainThread) {
     });
 
     function setDownloadHeaders(req, res, next) {
-        const safeUrlPath = decodeURIComponent(req.path || '').replace(/\\/g, '/');
+        const safeUrlPath = safeDecodeURIComponent(req.path || '').replace(/\\/g, '/');
         const infoPath = join(TMP_DIR, safeUrlPath.replace(/^\//, '').replace(/\.[\w\d]+$/, '.info.json'));
 
         if (existsSync(infoPath)) {
@@ -95,12 +105,43 @@ if (isMainThread) {
     }
 
     function handleHealthRequest(req, res) {
+        const healthToolStatus = checkExternalTools();
+        const cookieExists = Boolean(COOKIE_PATH && existsSync(COOKIE_PATH));
+        const tmpDirExists = existsSync(TMP_DIR);
+        const queueEntries = Object.values(downloadQueue);
+        const activeDownloads = queueEntries.filter((item) => item?.result?.downloading).length;
+
         res.send({
             success: true,
             result: {
+                name: 'VideoInstaller',
+                version: packageInfo.version,
                 platform: process.platform,
-                windowsOptimized: true,
+                windowsOptimized: IS_WINDOWS,
                 port: config.port || 2878,
+                address: config.address || '127.0.0.1',
+                runtime: {
+                    tmpDir: TMP_DIR,
+                    tmpDirExists,
+                    diskCleanupThreshold: DISK_CLEANUP_THRESHOLD,
+                    taskTimeout: {
+                        parse: TASK_TIMEOUT.PARSE,
+                        download: TASK_TIMEOUT.DOWNLOAD
+                    },
+                    activeDownloads,
+                    queuedTasks: queueEntries.length,
+                    blacklist: {
+                        path: BLACKLIST_PATH,
+                        loaded: Array.isArray(blackIPs),
+                        count: blackIPs.length
+                    },
+                    cookie: {
+                        configured: Boolean(COOKIE_PATH),
+                        path: COOKIE_PATH || '',
+                        exists: cookieExists
+                    },
+                    disk: lastDiskStatus
+                },
                 proxy: {
                     configured: Boolean((config.proxy || '').trim()),
                     value: config.proxy || '',
@@ -120,7 +161,7 @@ if (isMainThread) {
                         HTTPS_PROXY: process.env.HTTPS_PROXY || ''
                     }
                 },
-                toolStatus
+                toolStatus: healthToolStatus
             }
         });
     }
@@ -185,7 +226,7 @@ if (isMainThread) {
         const rawInput = typeof req.query.url === 'string'
             ? req.query.url
             : (req._parsedUrl.query || '');
-        let url = normalizeInputUrl(decodeURIComponent(rawInput));
+        let url = normalizeInputUrl(safeDecodeURIComponent(rawInput));
 
         if (/^https?:\/\/b23\.tv\//i.test(url)) {
             try {
@@ -201,7 +242,7 @@ if (isMainThread) {
             return res.send({ success: false, error: '请提供有效的 YouTube 或 Bilibili 视频 URL' });
         }
 
-        checkDiskSpace(downloadQueue);
+        lastDiskStatus = checkDiskSpace(downloadQueue);
 
         const timeout = setTimeout(() => {
             if (!res.headersSent) {
@@ -225,32 +266,28 @@ if (isMainThread) {
     }
 
     function handleDownloadRequest(req, res) {
-        const { website, v, p, format } = req.query;
-        const sourceUrl = String(req.query.source || '').trim();
-        const title = String(req.query.title || '').trim();
-        const transcodeRaw = String(req.query.transcode ?? '1').trim().toLowerCase();
-        const transcode = !['0', 'false', 'no'].includes(transcodeRaw);
-
-        if (!isSupportedWebsite(website)) {
-            return res.send({ success: false, error: '参数website错误（仅支持 y2b / b2b）' });
-        }
-        if (!isValidVideoID(website, v) && !isValidWebsiteSourceUrl(website, sourceUrl)) {
-            return res.send({ success: false, error: '参数v错误（无效视频ID）' });
-        }
-        if (p && !p.match(/^\d+$/)) {
-            return res.send({ success: false, error: '参数p错误（无效分P编号）' });
-        }
-        if (!format || !format.match(/^([\w\d-]+)(?:x([\w\d-]+))?$/)) {
-            return res.send({ success: false, error: '参数format格式错误（应为"视频IDx音频ID"）' });
+        const validation = validateDownloadContext(req.query);
+        if (!validation.success) {
+            return res.send({ success: false, error: validation.error });
         }
 
-        const queryKey = JSON.stringify({ website, v, p, format, transcode, sourceUrl });
+        const {
+            website,
+            videoID,
+            p,
+            format,
+            sourceUrl,
+            title,
+            transcode
+        } = validation.context;
+
+        const queryKey = JSON.stringify({ website, v: videoID, p, format, transcode, sourceUrl });
         if (!downloadQueue[queryKey]) {
-            checkDiskSpace(downloadQueue);
+            lastDiskStatus = checkDiskSpace(downloadQueue);
             downloadQueue[queryKey] = {
                 success: true,
                 result: {
-                    v,
+                    v: videoID,
                     format,
                     transcode,
                     phase: 'downloading',
@@ -264,7 +301,7 @@ if (isMainThread) {
             startWorker({
                 op: 'download',
                 website,
-                videoID: v,
+                videoID,
                 title,
                 p,
                 format,
@@ -361,19 +398,48 @@ if (isMainThread) {
     }
 
     function checkDiskSpace(queueRef) {
+        const status = {
+            checkedAt: new Date().toISOString(),
+            action: 'idle',
+            usedPercent: null,
+            threshold: DISK_CLEANUP_THRESHOLD,
+            activeDownloads: countActiveDownloads(queueRef),
+            tmpDir: TMP_DIR,
+            message: ''
+        };
+
         try {
             const disks = disk.getDiskInfoSync();
-            const cwd = resolve(__dirname);
-            const targetDisk = disks.find((d) => isPathOnDisk(cwd, d.mountpoint)) || disks[0];
+            const targetDisk = disks.find((d) => isPathOnDisk(TMP_DIR, d.mountpoint)) || disks[0];
 
-            if (!targetDisk) return;
+            if (!targetDisk) {
+                status.action = 'skipped';
+                status.message = '未识别到可用磁盘信息';
+                return status;
+            }
 
             const total = Number(targetDisk.total);
             const available = Number(targetDisk.available);
-            if (!Number.isFinite(total) || !Number.isFinite(available) || total <= 0) return;
+            if (!Number.isFinite(total) || !Number.isFinite(available) || total <= 0) {
+                status.action = 'skipped';
+                status.message = '磁盘容量信息无效';
+                return status;
+            }
 
             const usedPercent = (1 - available / total) * 100;
-            if (usedPercent <= DISK_CLEANUP_THRESHOLD) return;
+            status.usedPercent = Number(usedPercent.toFixed(1));
+
+            if (usedPercent <= DISK_CLEANUP_THRESHOLD) {
+                status.message = '磁盘占用正常';
+                return status;
+            }
+
+            if (status.activeDownloads > 0) {
+                status.action = 'deferred';
+                status.message = `磁盘占用 ${usedPercent.toFixed(1)}%，存在 ${status.activeDownloads} 个活动任务，暂缓清理`;
+                console.warn(status.message);
+                return status;
+            }
 
             console.warn(`磁盘占用 ${usedPercent.toFixed(1)}%，清理临时目录: ${TMP_DIR}`);
             if (existsSync(TMP_DIR)) {
@@ -382,9 +448,15 @@ if (isMainThread) {
             mkdirSync(TMP_DIR, { recursive: true });
 
             Object.keys(queueRef).forEach((key) => delete queueRef[key]);
+            status.action = 'cleaned';
+            status.message = `磁盘占用 ${usedPercent.toFixed(1)}%，已清理临时目录`;
         } catch (err) {
+            status.action = 'error';
+            status.message = `磁盘空间检查失败: ${err.message}`;
             console.warn('磁盘空间检查失败:', err.message);
         }
+
+        return status;
     }
 
     function startWorker(message, callback) {
@@ -579,9 +651,21 @@ if (isMainThread) {
             const mediaFiles = transcode
                 ? buildCompletedMediaResult(downloadDir, relativeFolder, destFile, transcodeSource)
                 : buildCompletedMediaResult(downloadDir, relativeFolder, destFile, inspectDownloadedMediaFiles(downloadDir, fileBase));
+            let openFolder = {
+                attempted: false,
+                opened: false,
+                error: ''
+            };
 
             if (IS_WINDOWS) {
-                openFolderInExplorer(downloadDir);
+                openFolder.attempted = true;
+                try {
+                    const launchResult = openFolderInExplorer(downloadDir);
+                    openFolder.opened = Boolean(launchResult?.opened);
+                } catch (openErr) {
+                    openFolder.error = safeError(openErr).substring(0, 200);
+                    console.warn(`自动打开目录失败: ${openFolder.error}`);
+                }
             }
 
             parentPort.postMessage({
@@ -598,6 +682,7 @@ if (isMainThread) {
                     dest: `file/${relativeFolder}/${destFile}`,
                     video: mediaFiles.video,
                     audio: mediaFiles.audio,
+                    openFolder,
                     metadata: `info/${toUrlPath(join(relativeFolder, infoFile))}`,
                     note: transcode
                         ? `已转换为${FORCE_VIDEO_CODEC}编码的${FORCE_RECODE_FORMAT}格式（文件后缀: -h264.mp4）`
@@ -610,9 +695,13 @@ if (isMainThread) {
                 result: {
                     v: videoID,
                     title,
+                    phase: 'failed',
                     downloading: false,
                     downloadSucceed: false,
                     dest: transcode ? '下载或转码失败' : '下载失败',
+                    video: null,
+                    audio: null,
+                    error: buildSiteAwareError(website, err, transcode ? 'transcode' : 'download').substring(0, 300),
                     metadata: buildSiteAwareError(website, err, transcode ? 'transcode' : 'download').substring(0, 300)
                 }
             });
@@ -734,6 +823,13 @@ function openFolderInExplorer(targetPath) {
         ? join(process.env.WINDIR, 'explorer.exe')
         : 'C:\\Windows\\explorer.exe';
 
+    if (!existsSync(normalizedPath)) {
+        throw new Error('目标路径不存在');
+    }
+    if (!existsSync(explorerPath)) {
+        throw new Error('未找到 Windows Explorer');
+    }
+
     const child = spawn(explorerPath, [normalizedPath], {
         detached: true,
         stdio: 'ignore',
@@ -741,7 +837,15 @@ function openFolderInExplorer(targetPath) {
         shell: false
     });
 
+    if (!child.pid) {
+        throw new Error('Windows Explorer 启动失败');
+    }
+
     child.unref();
+    return {
+        opened: true,
+        path: normalizedPath
+    };
 }
 
 function checkExternalTools() {
@@ -1234,14 +1338,73 @@ function buildCompletedMediaResult(downloadDir, relativeFolder, destFile, media)
         result.audio = `file/${relativeFolder}/${audioFile}`;
     }
 
-    if (!result.video && destFile) {
-        result.video = `file/${relativeFolder}/${destFile}`;
-    }
-    if (!result.audio && destFile && !result.video) {
-        result.audio = `file/${relativeFolder}/${destFile}`;
+    if ((!result.video || !result.audio) && destFile && existsSync(join(downloadDir, destFile))) {
+        const detected = detectMediaStream(join(downloadDir, destFile));
+        const destUrl = `file/${relativeFolder}/${destFile}`;
+
+        if (!result.video && detected.hasVideo) {
+            result.video = destUrl;
+        }
+        if (!result.audio && detected.hasAudio) {
+            result.audio = destUrl;
+        }
     }
 
     return result;
+}
+
+function countActiveDownloads(queueRef) {
+    return Object.values(queueRef || {}).filter((item) => item?.result?.downloading).length;
+}
+
+function safeDecodeURIComponent(value) {
+    const text = String(value || '');
+    try {
+        return decodeURIComponent(text);
+    } catch (err) {
+        return text;
+    }
+}
+
+function validateDownloadContext(query) {
+    const website = String(query.website || '').trim();
+    const videoID = String(query.v || '').trim();
+    const p = String(query.p || '').trim();
+    const format = String(query.format || '').trim();
+    const sourceUrl = String(query.source || '').trim();
+    const title = String(query.title || '').trim();
+    const transcodeRaw = String(query.transcode ?? '1').trim().toLowerCase();
+    const transcode = !['0', 'false', 'no'].includes(transcodeRaw);
+
+    if (!isSupportedWebsite(website)) {
+        return { success: false, error: '参数website错误（仅支持 y2b / b2b）' };
+    }
+    if (p && !/^\d+$/.test(p)) {
+        return { success: false, error: '参数p错误（无效分P编号）' };
+    }
+    if (!format || !/^([\w\d-]+)(?:x([\w\d-]+))?$/.test(format)) {
+        return { success: false, error: '参数format格式错误（应为"视频IDx音频ID"）' };
+    }
+
+    const hasValidVideoID = isValidVideoID(website, videoID);
+    const hasValidSourceUrl = isValidWebsiteSourceUrl(website, sourceUrl);
+
+    if (!hasValidVideoID && !hasValidSourceUrl) {
+        return { success: false, error: '参数v错误（无效视频ID）' };
+    }
+
+    return {
+        success: true,
+        context: {
+            website,
+            videoID,
+            p: p || null,
+            format,
+            sourceUrl: hasValidSourceUrl ? sourceUrl : '',
+            title,
+            transcode
+        }
+    };
 }
 
 function detectMediaStream(filePath) {

@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>视频解析下载器 v1.1.0 | 自动转换为H.264 MP4格式</title>
+    <title>VideoInstaller v1.1.1 | Windows 本地视频解析下载器</title>
     <link rel="stylesheet" href="./css/style.css">
     <style>
         :root {
@@ -190,12 +190,55 @@
             font-size: 0.9rem;
             font-weight: 600;
         }
+
+        .status-panel {
+            display: none;
+            margin: 18px auto 0;
+            max-width: 960px;
+            padding: 14px 16px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            background: #eef6ff;
+            color: #194b80;
+            border: 1px solid #cfe3ff;
+        }
+
+        .status-panel.status-success {
+            background: #edf8ef;
+            color: #1d5f2a;
+            border-color: #cbe9d1;
+        }
+
+        .status-panel.status-error {
+            background: #fff3f3;
+            color: #9f1d1d;
+            border-color: #f5c9c9;
+        }
+
+        .status-panel.status-info {
+            background: #eef6ff;
+            color: #194b80;
+            border-color: #cfe3ff;
+        }
+
+        .status-panel a {
+            color: inherit;
+            text-decoration: underline;
+        }
+
+        .download-mode-note {
+            margin: 8px 0 20px;
+            color: #666;
+            font-size: 0.95rem;
+        }
     </style>
 </head>
 
 <body>
     <div class="title">
-        <div>视频解析下载器 v1.1.0</div>
+        <div>VideoInstaller v1.1.1</div>
         <div class="github">
             <a href="https://github.com/Alexis-ray/VideoInstaller" target="_blank">
                 <svg style="fill: #333" height="32" viewBox="0 0 16 16" version="1.1" width="32" aria-hidden="true">
@@ -212,6 +255,7 @@
             <input class="search" id="url" name="url" type="url" placeholder="请输入 YouTube 或 Bilibili 视频 URL（可选原始下载或转码 H.264 MP4）"
                 autocomplete="off" required>
         </form>
+        <div id="statusPanel" class="status-panel" role="status" aria-live="polite"></div>
     </div>
 
     <!-- 格式说明 -->
@@ -231,6 +275,7 @@
             <div style="margin-top: 10px;">
                 <button id="downloadCoverBtn" class="button" type="button" onclick="downloadThumbnail()">保存封面到视频目录</button>
             </div>
+            <div class="download-mode-note">“仅下载此音频 / 仅下载此视频”会保留单独流文件；下方主按钮用于完整下载或下载后转码。</div>
         </div>
 
         <!-- 音频列表 -->
@@ -279,8 +324,8 @@
         <h3 id="waitTranscodeText">正在转码为 H.264 MP4，请稍候...</h3>
     </div>
     <div id="log">
-        <p>更新日志：v1.1.0 正式支持 YouTube 与 Bilibili 双站点下载，完善短链、番剧、合集、分P与来源类型展示</p>
-        <p>提示：当前版本支持 YouTube 与 Bilibili 视频下载，所有视频可统一转换为 H.264 编码的 MP4 格式，确保在手机、电脑等设备上兼容播放</p>
+        <p>当前版本：v1.1.1，重点提升下载稳定性、完成态反馈、健康检查信息与整体成品化体验。</p>
+        <p>支持 YouTube 与 Bilibili 双站点解析下载，可保留原始文件，也可统一转码为更通用的 H.264 MP4。</p>
     </div>
 
     <script src="js/jquery.js"></script>
@@ -288,6 +333,39 @@
     <script>
         // 全局变量存储解析结果
         let videoInfo = null;
+
+        function escapeHtml(text) {
+            return String(text || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function showStatus(type, message) {
+            const panel = $('#statusPanel');
+            panel.removeClass('status-success status-error status-info')
+                .addClass(`status-${type || 'info'}`)
+                .html(message || '')
+                .show();
+        }
+
+        function showError(message) {
+            showStatus('error', escapeHtml(message || '操作失败'));
+        }
+
+        function showInfo(message) {
+            showStatus('info', escapeHtml(message || '正在处理，请稍候'));
+        }
+
+        function showSuccess(message) {
+            showStatus('success', message || '操作已完成');
+        }
+
+        function clearStatus() {
+            $('#statusPanel').hide().removeClass('status-success status-error status-info').empty();
+        }
 
         // 初始化页面
         $(() => {
@@ -311,8 +389,10 @@
             if (!url) return;
 
             // 显示加载提示
+            clearStatus();
             $('#divResult').hide();
             $('#waitParse').show();
+            showInfo('正在解析链接并获取可用格式，请稍候…');
 
             // 发送解析请求
             $.ajax({
@@ -320,16 +400,17 @@
                 success: (res) => {
                     $('#waitParse').hide();
                     if (!res.success) {
-                        alert(`解析失败：${res.error}`);
+                        showError(`解析失败：${res.error || '未返回有效结果'}`);
                         return;
                     }
                     videoInfo = res.result;
                     fillResult(videoInfo); // 填充解析结果
                     $('#divResult').show();
+                    showSuccess(`解析完成：${escapeHtml(videoInfo.title || '已获取视频信息')}，请选择需要的下载方式。`);
                 },
                 error: (xhr) => {
                     $('#waitParse').hide();
-                    alert(`解析出错：${xhr.statusText || '网络错误'}`);
+                    showError(`解析出错：${xhr.statusText || '网络错误'}`);
                 }
             });
         }
@@ -353,6 +434,8 @@
                     let index = Number($(this).data('index') || 0) + 1;
                     if (index < list.length) {
                         $(this).data('index', index).attr('src', list[index]);
+                    } else {
+                        showInfo('封面预览加载失败，但不影响解析和下载；如有需要，仍可稍后尝试保存封面。');
                     }
                 });
             $('#thumbnail').attr('src', proxyCandidates[0] || '');
@@ -372,7 +455,7 @@
                         <td>${audio.rate}</td>
                         <td>${audio.size}</td>
                         <td>${audio.info}</td>
-                        <td><a class="download-link" href="javascript:downloadSingle('audio', '${audio.id}')">单独下载</a></td>
+                        <td><a class="download-link" href="javascript:downloadSingle('audio', '${audio.id}')">仅下载此音频</a></td>
                     </tr>
                 `);
                 audioTable.append(row);
@@ -398,7 +481,7 @@
                         <td>${codecLabel}</td>
                         <td>${video.rate}</td>
                         <td>${video.size}</td>
-                        <td><a class="download-link" href="javascript:downloadSingle('video', '${video.id}')">单独下载</a></td>
+                        <td><a class="download-link" href="javascript:downloadSingle('video', '${video.id}')">仅下载此视频</a></td>
                     </tr>
                 `);
                 videoTable.append(row);
@@ -411,6 +494,9 @@
          */
         function downloadSingle(type, id) {
             if (!videoInfo) return;
+            clearStatus();
+            const typeLabel = type === 'audio' ? '音频' : '视频';
+            showInfo(`正在准备仅下载${typeLabel}流，请稍候…`);
             const url = `/y2b/download?website=${videoInfo.website}&v=${videoInfo.v}&title=${encodeURIComponent(videoInfo.title || '')}&p=${videoInfo.p || ''}&format=${id}&transcode=0`;
             startDownload(appendSourceToDownloadUrl(url));
         }
@@ -423,10 +509,11 @@
             const selectedVideo = $('input[name="video"]:checked').val();
             const selectedAudio = $('input[name="audio"]:checked').val();
             if (!selectedVideo || !selectedAudio) {
-                alert('请选择音频和视频格式');
+                showError('请先选择音频和视频格式，再开始完整下载。');
                 return;
             }
 
+            clearStatus();
             const transcodeFlag = transcode ? '1' : '0';
             const url = `/y2b/download?website=${videoInfo.website}&v=${videoInfo.v}&title=${encodeURIComponent(videoInfo.title || '')}&p=${videoInfo.p || ''}&format=${selectedVideo}x${selectedAudio}&transcode=${transcodeFlag}`;
             startDownload(appendSourceToDownloadUrl(url), transcode);
@@ -437,6 +524,9 @@
          */
         function startDownload(url, transcode = false) {
             showDownloadModal(transcode);
+            showInfo(transcode
+                ? '已开始下载并将在完成后自动转码为 H.264 MP4，请耐心等待…'
+                : '已开始下载原始文件，请稍候…');
             const pollInterval = setInterval(() => {
                 $.ajax({
                     url: url,
@@ -444,18 +534,20 @@
                         if (!res.success) {
                             clearInterval(pollInterval);
                             hideAllWaitModals();
-                            alert(`下载失败：${res.error || res.result.metadata}`);
+                            showError(`下载失败：${res.error || res.result?.metadata || '未知错误'}`);
                             return;
                         }
 
                         const result = res.result;
                         if (result.phase === 'downloading-video' || result.phase === 'downloading-audio' || result.phase === 'downloading') {
                             showDownloadModal(result.transcode);
+                            showInfo(result.dest || '正在下载文件，请稍候…');
                             return;
                         }
 
                         if (result.phase === 'transcoding') {
                             showTranscodeModal();
+                            showInfo(result.dest || '正在转码，请稍候…');
                             return;
                         }
 
@@ -463,18 +555,16 @@
                             clearInterval(pollInterval);
                             hideAllWaitModals();
                             if (result.downloadSucceed) {
-                                const formatDesc = result.transcode ? '下载并转码完成' : '下载完成';
-                                const path = toDisplayPath(result.dest);
-                                alert(`${formatDesc}\n标题：${result.title || videoInfo.title || ''}\n格式：${result.transcode ? 'H.264 MP4' : '原始格式'}\n路径：${path}`);
+                                showSuccess(buildDownloadSummary(result));
                             } else {
-                                alert(`下载失败：${result.metadata}`);
+                                showError(`下载失败：${result.error || result.metadata || '未知错误'}`);
                             }
                         }
                     },
                     error: () => {
                         clearInterval(pollInterval);
                         hideAllWaitModals();
-                        alert('下载请求失败');
+                        showError('下载请求失败，请检查服务是否仍在运行。');
                     }
                 });
             }, 2000); // 每2秒轮询一次
@@ -522,9 +612,11 @@
             if (!videoInfo) return;
             const src = $('#downloadCoverBtn').data('thumbnail-src') || videoInfo.thumbnail || '';
             if (!src) {
-                alert('当前没有可用封面图');
+                showError('当前没有可用封面图。');
                 return;
             }
+            clearStatus();
+            showInfo('正在保存封面到视频目录，请稍候…');
             const params = new URLSearchParams({
                 website: videoInfo.website || '',
                 v: videoInfo.v || '',
@@ -537,12 +629,13 @@
                 url: `/y2b/thumbnail?${params.toString()}`,
                 success: (res) => {
                     if (!res.success) {
-                        alert(`封面保存失败：${res.error || '未知错误'}`);
+                        showError(`封面保存失败：${res.error || '未知错误'}`);
                         return;
                     }
-                    alert(`封面已保存\n路径：${toDisplayPath(res.result.dest)}`);
+                    const coverPath = toDisplayPath(res.result.dest);
+                    showSuccess(`封面已保存到：<a href="${escapeHtml(coverPath)}" target="_blank">${escapeHtml(coverPath)}</a>`);
                 },
-                error: () => alert('封面保存请求失败')
+                error: () => showError('封面保存请求失败，请稍后重试。')
             });
         }
 
@@ -582,6 +675,8 @@
                 videoInfo.p = selectedP;
                 if (selectedUrl) {
                     videoInfo.source = selectedUrl;
+                } else {
+                    showInfo('当前分P缺少来源链接，已尝试按现有上下文重新解析。');
                 }
                 parseByCurrentSelection();
             });
@@ -622,25 +717,31 @@
         function parseByCurrentSelection() {
             if (!videoInfo) return;
             const source = String(videoInfo.source || '').trim();
-            if (!source) return;
+            if (!source) {
+                showError('当前分P缺少可重新解析的来源链接。');
+                return;
+            }
 
+            clearStatus();
             $('#divResult').hide();
             $('#waitParse').show();
+            showInfo('正在切换分P并重新解析，请稍候…');
             $.ajax({
                 url: `/y2b/parse?url=${encodeURIComponent(source)}`,
                 success: (res) => {
                     $('#waitParse').hide();
                     if (!res.success) {
-                        alert(`分P切换失败：${res.error}`);
+                        showError(`分P切换失败：${res.error || '未知错误'}`);
                         return;
                     }
                     videoInfo = res.result;
                     fillResult(videoInfo);
                     $('#divResult').show();
+                    showSuccess(`已切换到分P ${escapeHtml(videoInfo.p || '')}，可以继续下载。`);
                 },
                 error: (xhr) => {
                     $('#waitParse').hide();
-                    alert(`分P切换失败：${xhr.statusText || '网络错误'}`);
+                    showError(`分P切换失败：${xhr.statusText || '网络错误'}`);
                 }
             });
         }
@@ -656,6 +757,40 @@
             const text = String(pathText || '').trim();
             if (!text) return '/';
             return text.startsWith('/') ? text : `/${text}`;
+        }
+
+        function buildDownloadSummary(result) {
+            const title = escapeHtml(result.title || videoInfo?.title || '未命名视频');
+            const mode = result.transcode ? '下载并转码完成（H.264 MP4）' : '下载完成（原始格式）';
+            const lines = [`<strong>${mode}</strong>`, `标题：${title}`];
+
+            if (result.dest) {
+                const dest = toDisplayPath(result.dest);
+                lines.push(`主文件：<a href="${escapeHtml(dest)}" target="_blank">${escapeHtml(dest)}</a>`);
+            }
+            if (result.video) {
+                const video = toDisplayPath(result.video);
+                lines.push(`视频文件：<a href="${escapeHtml(video)}" target="_blank">${escapeHtml(video)}</a>`);
+            }
+            if (result.audio && result.audio !== result.video) {
+                const audio = toDisplayPath(result.audio);
+                lines.push(`音频文件：<a href="${escapeHtml(audio)}" target="_blank">${escapeHtml(audio)}</a>`);
+            }
+            if (result.metadata) {
+                const metadata = toDisplayPath(result.metadata);
+                lines.push(`元数据：<a href="${escapeHtml(metadata)}" target="_blank">${escapeHtml(metadata)}</a>`);
+            }
+            if (result.folder) {
+                const folder = toDisplayPath(result.folder);
+                lines.push(`目录：<a href="${escapeHtml(folder)}" target="_blank">${escapeHtml(folder)}</a>`);
+            }
+            if (result.openFolder?.attempted) {
+                lines.push(result.openFolder.opened
+                    ? '已尝试自动打开目标文件夹。'
+                    : `自动打开文件夹失败：${escapeHtml(result.openFolder.error || '请手动打开目录')}`);
+            }
+
+            return lines.join('<br>');
         }
 
         /**
