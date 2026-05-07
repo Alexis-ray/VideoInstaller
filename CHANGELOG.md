@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 项目说明见 [`README.md`](README.md)。
 
+## [v1.1.2] - 2026-05-07
+
+这是一个面向发布整理的版本，主要做了三件事：移除 blacklist 功能链、整理 GitHub 主页文档、统一 Windows 发布说明。
+
+### Cleanup
+
+- 删除 `blacklist.txt` 及其在运行时、配置、打包脚本中的所有引用
+- 收敛发布文档结构，保留更适合 GitHub 首页的内容
+- 统一版本号到 `v1.1.2`
+
 ## [v1.1.1] - 2026-04-25
 
 这是一个以稳定性和成品化体验为重点的补丁版本，主要针对下载完成态、异常输入处理、健康检查信息和前端反馈方式进行打磨。
@@ -30,6 +40,13 @@ All notable changes to this project will be documented in this file.
 - 重写 README 结构，使其更适合作为正式项目主页文档
 - 统一项目定位、支持范围、配置说明、接口说明与验证建议
 - 补充 `v1.1.1` 版本说明，明确该版本属于补丁级稳定性发布
+
+### Release engineering
+
+- 新增运行目录与数据目录抽象，支持 `portable` 与 `installed` 两种发布模式
+- 配置文件改为外部优先读取，便于目录版与安装包版复用同一套程序文件
+- 工具路径、静态资源路径、Cookie/黑名单/tmp 目录统一支持相对发布目录解析
+- 增加目录版构建脚本、发布工具下载脚本和 Inno Setup 安装器脚本
 
 ## [v1.1.0] - 2026-04-21
 

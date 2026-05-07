@@ -1,5 +1,5 @@
 const { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync, statSync } = require('fs');
-const { join, resolve, extname } = require('path');
+const { dirname, isAbsolute, join, resolve, extname } = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { Worker, isMainThread, parentPort } = require('worker_threads');
 const express = require('express');
@@ -9,15 +9,23 @@ const http = require('http');
 const disk = require('node-disk-info');
 const packageInfo = require('./package.json');
 
-const config = require('./config.json');
+const SOURCE_ROOT_DIR = __dirname;
+const DEFAULT_CONFIG_PATH = join(SOURCE_ROOT_DIR, 'config.json');
+const APP_ROOT_DIR = resolve(process.pkg ? dirname(process.execPath) : SOURCE_ROOT_DIR);
+const DEFAULT_CONFIG = readJsonFile(DEFAULT_CONFIG_PATH, {});
+const runtimeBootstrap = bootstrapRuntime();
+const config = runtimeBootstrap.config;
+const CONFIG_PATH = runtimeBootstrap.configPath;
+const RUNTIME_MODE = runtimeBootstrap.runtimeMode;
+const DATA_ROOT_DIR = runtimeBootstrap.dataRootDir;
+const STATIC_DIR = runtimeBootstrap.staticDir;
 const IS_WINDOWS = process.platform === 'win32';
 
-const TMP_DIR = resolve(__dirname, config.tmpDir || 'tmp');
-const BLACKLIST_PATH = resolve(__dirname, config.blacklist || 'blacklist.txt');
-const COOKIE_PATH = config.cookie ? resolve(__dirname, config.cookie) : null;
+const TMP_DIR = resolveRuntimePath(config.tmpDir || 'tmp', DATA_ROOT_DIR);
+const COOKIE_PATH = config.cookie ? resolveRuntimePath(config.cookie, DATA_ROOT_DIR) : null;
 
-const YT_DLP_PATH = config.ytDlpPath || 'yt-dlp';
-const FFMPEG_PATH = config.ffmpegPath || 'ffmpeg';
+const YT_DLP_PATH = resolveRuntimePath(config.ytDlpPath || defaultToolPath('yt-dlp.exe', 'yt-dlp'), APP_ROOT_DIR);
+const FFMPEG_PATH = resolveRuntimePath(config.ffmpegPath || defaultToolPath('ffmpeg.exe', 'ffmpeg'), APP_ROOT_DIR);
 
 const FORCE_RECODE_FORMAT = 'mp4';
 const FORCE_VIDEO_CODEC = 'h264';
@@ -31,9 +39,12 @@ if (!existsSync(TMP_DIR)) {
     mkdirSync(TMP_DIR, { recursive: true });
 }
 
+if (COOKIE_PATH) {
+    ensureParentDir(COOKIE_PATH);
+}
+
 if (isMainThread) {
     const app = express();
-    let blackIPs = loadBlacklist();
     const downloadQueue = {};
     const toolStatus = checkExternalTools();
     let lastDiskStatus = {
@@ -60,12 +71,10 @@ if (isMainThread) {
         const clientIP = getRemoteIP(req);
         console.log(`[${new Date().toISOString()}] ${clientIP} => ${req.url}`);
 
-        blackIPs.includes(clientIP)
-            ? res.status(500).send("<div style='font-size: 33vw; text-align: center'>500</div>")
-            : next();
+        next();
     });
 
-    app.use('/', express.static(join(__dirname, 'static')));
+    app.use('/', express.static(STATIC_DIR));
     app.use('/file', setDownloadHeaders, express.static(TMP_DIR));
     app.use('/info', express.static(TMP_DIR));
 
@@ -121,6 +130,11 @@ if (isMainThread) {
                 port: config.port || 2878,
                 address: config.address || '127.0.0.1',
                 runtime: {
+                    mode: RUNTIME_MODE,
+                    configPath: CONFIG_PATH,
+                    appRootDir: APP_ROOT_DIR,
+                    dataRootDir: DATA_ROOT_DIR,
+                    staticDir: STATIC_DIR,
                     tmpDir: TMP_DIR,
                     tmpDirExists,
                     diskCleanupThreshold: DISK_CLEANUP_THRESHOLD,
@@ -130,11 +144,6 @@ if (isMainThread) {
                     },
                     activeDownloads,
                     queuedTasks: queueEntries.length,
-                    blacklist: {
-                        path: BLACKLIST_PATH,
-                        loaded: Array.isArray(blackIPs),
-                        count: blackIPs.length
-                    },
                     cookie: {
                         configured: Boolean(COOKIE_PATH),
                         path: COOKIE_PATH || '',
@@ -382,18 +391,6 @@ if (isMainThread) {
         } catch (err) {
             console.warn('封面代理失败，已回退直连:', safeError(err).substring(0, 160));
             res.redirect(302, url);
-        }
-    }
-
-    function loadBlacklist() {
-        try {
-            if (!existsSync(BLACKLIST_PATH)) return [];
-            return readFileSync(BLACKLIST_PATH, 'utf8')
-                .split(/\s+/)
-                .filter((ip) => ip.trim() && ip.match(/^\d+\.\d+\.\d+\.\d+$/));
-        } catch (err) {
-            console.warn('黑名单加载失败:', err.message);
-            return [];
         }
     }
 
@@ -1617,4 +1614,139 @@ function normalizeDiskPath(pathText) {
         .replace(/\//g, '\\')
         .replace(/\\+$/, '')
         .toLowerCase();
+}
+
+function bootstrapRuntime() {
+    const appConfigPath = existsSync(join(APP_ROOT_DIR, 'config.json'))
+        ? join(APP_ROOT_DIR, 'config.json')
+        : DEFAULT_CONFIG_PATH;
+    const appConfig = readJsonFile(appConfigPath, DEFAULT_CONFIG);
+    const mode = resolveRuntimeMode(appConfig);
+    const preferUserData = mode === 'installed';
+    const dataRootDir = resolveDataRootDir(appConfig, preferUserData);
+    const configCandidates = buildConfigCandidates(preferUserData, dataRootDir, appConfigPath);
+    const configInfo = loadConfigFromCandidates(configCandidates);
+
+    return {
+        config: mergeConfigs(DEFAULT_CONFIG, configInfo.config),
+        configPath: configInfo.path,
+        runtimeMode: mode,
+        dataRootDir,
+        staticDir: join(APP_ROOT_DIR, 'static')
+    };
+}
+
+function buildConfigCandidates(preferUserData, dataRootDir, appConfigPath) {
+    const candidates = [];
+
+    if (preferUserData) {
+        candidates.push(join(dataRootDir, 'config.json'));
+    }
+
+    candidates.push(appConfigPath);
+
+    if (normalizeDiskPath(DEFAULT_CONFIG_PATH) !== normalizeDiskPath(appConfigPath)) {
+        candidates.push(DEFAULT_CONFIG_PATH);
+    }
+
+    return [...new Set(candidates.map((item) => resolve(item)))];
+}
+
+function resolveRuntimeMode(appConfig) {
+    const mode = String(
+        process.env.VIDEOINSTALLER_RUNTIME_MODE
+        || (process.argv.includes('--installed') ? 'installed' : '')
+        || appConfig?.runtimeMode
+        || ''
+    ).trim().toLowerCase();
+
+    return mode === 'installed' ? 'installed' : 'portable';
+}
+
+function resolveDataRootDir(appConfig, preferUserData) {
+    const configuredPath = String(appConfig?.dataRootDir || '').trim();
+    if (configuredPath) {
+        return resolveRuntimePath(configuredPath, APP_ROOT_DIR);
+    }
+
+    return preferUserData ? getUserDataDir() : APP_ROOT_DIR;
+}
+
+function loadConfigFromCandidates(candidates) {
+    for (const candidate of candidates) {
+        if (!existsSync(candidate)) {
+            continue;
+        }
+
+        return {
+            path: candidate,
+            config: readJsonFile(candidate, {})
+        };
+    }
+
+    return {
+        path: DEFAULT_CONFIG_PATH,
+        config: { ...DEFAULT_CONFIG }
+    };
+}
+
+function mergeConfigs(baseConfig, runtimeConfig) {
+    const baseTaskTimeout = baseConfig?.taskTimeout && typeof baseConfig.taskTimeout === 'object'
+        ? baseConfig.taskTimeout
+        : {};
+    const runtimeTaskTimeout = runtimeConfig?.taskTimeout && typeof runtimeConfig.taskTimeout === 'object'
+        ? runtimeConfig.taskTimeout
+        : {};
+
+    return {
+        ...baseConfig,
+        ...runtimeConfig,
+        taskTimeout: {
+            ...baseTaskTimeout,
+            ...runtimeTaskTimeout
+        }
+    };
+}
+
+function readJsonFile(filePath, fallbackValue) {
+    try {
+        return JSON.parse(readFileSync(filePath, 'utf8'));
+    } catch (err) {
+        return fallbackValue;
+    }
+}
+
+function resolveRuntimePath(targetPath, baseDir) {
+    const text = String(targetPath || '').trim();
+    if (!text) {
+        return '';
+    }
+
+    if (isAbsolute(text)) {
+        return resolve(text);
+    }
+
+    return resolve(baseDir, text);
+}
+
+function defaultToolPath(executableName, fallbackCommand) {
+    const packagedToolPath = join('tools', executableName);
+    const packagedResolved = resolve(APP_ROOT_DIR, packagedToolPath);
+    return existsSync(packagedResolved) ? packagedToolPath : fallbackCommand;
+}
+
+function getUserDataDir() {
+    const baseDir = process.env.LOCALAPPDATA || process.env.APPDATA || APP_ROOT_DIR;
+    return join(baseDir, 'VideoInstaller');
+}
+
+function ensureParentDir(filePath) {
+    if (!filePath) {
+        return;
+    }
+
+    const parentDir = dirname(filePath);
+    if (!existsSync(parentDir)) {
+        mkdirSync(parentDir, { recursive: true });
+    }
 }

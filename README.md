@@ -2,7 +2,7 @@
 
 VideoInstaller 是一个面向 Windows 本地环境的网页式视频解析下载器，基于 `Express + yt-dlp + ffmpeg` 构建，当前支持 YouTube 与 Bilibili 双站点下载。
 
-当前版本：`v1.1.1`
+当前版本：`v1.1.2`
 
 [更新日志](CHANGELOG.md)
 
@@ -17,6 +17,14 @@ VideoInstaller 是一个面向 Windows 本地环境的网页式视频解析下�
 - 支持下载完成后自动打开目标文件夹
 - 支持代理、Cookie 与健康检查接口
 - 所有视频相关文件统一保存到 `tmp/<视频标题>/`
+
+## Release 概览
+
+当前发布版的目标是提供一个可直接发布到 GitHub 的 Windows 目录版和安装包版：
+
+- 目录版可直接解压运行
+- 安装包版提供桌面/开始菜单入口
+- 配置和数据文件按发布场景分离
 
 ## 适用场景
 
@@ -36,7 +44,7 @@ VideoInstaller 是一个面向 Windows 本地环境的网页式视频解析下�
 - `yt-dlp.exe`
 - `ffmpeg.exe`
 
-推荐工具路径：
+开发环境推荐工具路径：
 
 - `C:/Tools/yt-dlp.exe`
 - `C:/Tools/ffmpeg/bin/ffmpeg.exe`
@@ -71,8 +79,8 @@ npm start
 {
   "port": 2878,
   "address": "127.0.0.1",
+  "runtimeMode": "portable",
   "tmpDir": "tmp",
-  "blacklist": "blacklist.txt",
   "cookie": "cookies.txt",
   "disable": false,
   "proxy": "http://127.0.0.1:7890",
@@ -93,8 +101,8 @@ npm start
 | 字段 | 说明 |
 | --- | --- |
 | `port` / `address` | 服务监听地址 |
+| `runtimeMode` | 运行模式：`portable` 写程序目录，`installed` 优先写 `%LOCALAPPDATA%\VideoInstaller\` |
 | `tmpDir` | 下载与相关文件保存目录 |
-| `blacklist` | 黑名单 IP 文件路径 |
 | `cookie` | Cookie 文件路径 |
 | `proxy` | 代理地址 |
 | `proxyFallbackDirect` | 代理失败后是否回退直连 |
@@ -216,11 +224,36 @@ GET /y2b/thumbnail?website=y2b|b2b&v=<id>&title=<标题>&src=<封面源>&save=1
 npm run check
 npm run health
 npm start
+npm run release:tools
+npm run release:portable
+npm run release:installer
 ```
 
-## 发布前验证建议
+## Windows 发布
 
-当前项目没有独立测试套件，建议每次更新后至少完成以下检查：
+推荐顺序：先目录版，再安装包版。
+
+1. 运行 `npm install`
+2. 运行 `npm run release:tools`
+3. 运行 `npm run release:portable`
+4. 运行 `npm run release:installer`
+
+目录版输出：
+
+```text
+release/
+  VideoInstaller-win-x64/
+    VideoInstaller.exe
+    config.json
+    cookies.txt
+    static/
+    tools/
+    tmp/
+```
+
+安装包版会创建开始菜单入口、可选桌面快捷方式和卸载入口。
+
+## 发布前验证建议
 
 1. 执行 `npm run check`
 2. 启动服务并访问首页
@@ -229,13 +262,8 @@ npm start
 5. 手动测试一个 Bilibili 链接解析与下载
 6. 验证原始下载、转码下载、封面保存与分 P 切换
 
-## 已知说明
-
-- 当前主要面向 Windows 场景优化
-- `.git` 中保留旧仓库名相关历史记录属于 Git 历史，不影响当前项目
-- 如果后续推送 GitHub 失败，通常是本地网络连通性问题，而非项目代码问题
-
 ## 版本说明
 
 - `v1.1.0`：完成 YouTube / Bilibili 双站点能力整合
 - `v1.1.1`：聚焦稳定性、交互反馈与项目文档成品化整理
+- `v1.1.2`：清理 blacklist 链路，整理发布文档并强化 GitHub 发布呈现

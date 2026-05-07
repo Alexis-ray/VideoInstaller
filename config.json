@@ -1,8 +1,8 @@
 {
     "port": 2878,
     "address": "127.0.0.1",
+    "runtimeMode": "portable",
     "tmpDir": "tmp",
-    "blacklist": "blacklist.txt",
     "cookie": "cookies.txt",
     "disable": false,
     "proxy": "http://127.0.0.1:7890",
