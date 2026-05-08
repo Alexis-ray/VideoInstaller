@@ -41,6 +41,7 @@ if (!existsSync(TMP_DIR)) {
 
 if (COOKIE_PATH) {
     ensureParentDir(COOKIE_PATH);
+    ensureCookieTemplate(COOKIE_PATH);
 }
 
 if (isMainThread) {
@@ -1749,4 +1750,12 @@ function ensureParentDir(filePath) {
     if (!existsSync(parentDir)) {
         mkdirSync(parentDir, { recursive: true });
     }
+}
+
+function ensureCookieTemplate(filePath) {
+    if (!filePath || existsSync(filePath)) {
+        return;
+    }
+
+    writeFileSync(filePath, '# Netscape HTTP Cookie File\n# Replace this file with exported browser cookies if needed.\n', 'ascii');
 }

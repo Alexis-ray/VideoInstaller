@@ -164,6 +164,7 @@ npm start
 - 健康检查接口会返回 `sitePolicy`，可直接查看不同站点的代理策略
 - Bilibili 部分清晰度、会员内容或区域限制内容可能要求登录态
 - 建议使用浏览器导出的 Netscape 格式 `cookies.txt`
+- 源码运行、便携版和安装版在缺少 `cookies.txt` 时都会自动生成空白模板
 
 ## Web UI 说明
 
