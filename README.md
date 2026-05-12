@@ -1,92 +1,102 @@
 # VideoInstaller
 
-VideoInstaller 是一个面向 Windows 本地环境的网页式视频解析下载器，基于 `Express + yt-dlp + ffmpeg` 构建，当前支持 YouTube 与 Bilibili 双站点下载。
+Windows 原生桌面视频下载器，基于 `WPF + .NET 8 + yt-dlp + ffmpeg` 构建。
 
-当前版本：`v1.1.2`
+当前稳定版本：`v2.0.1`  
+[更新日志](CHANGELOG.md) · [发布说明](docs/release-notes-v2.0.1.md)
 
-[更新日志](CHANGELOG.md)
+## 发布资产
 
-## 项目特性
+### 主发布线：Native 桌面版
 
-- 支持 YouTube 与 Bilibili 视频链接解析
-- 支持 `b23.tv` 短链自动展开
-- 支持 Bilibili 普通视频、多 P、番剧 `ep/ss`、合集 `ml`
+- 目录版：`VideoInstaller-v2.0.1-win-x64.zip`
+- 安装包版：`VideoInstaller-v2.0.1-win-x64-setup.exe`
+
+### 兼容产物：Legacy Web 版
+
+- 目录版：`VideoInstaller-legacy-v2.0.1-win-x64/`
+- 安装包版：`VideoInstaller-legacy-v2.0.1-win-x64-setup.exe`
+
+## 特性
+
+- 原生 Windows 桌面窗口，不使用浏览器、不使用 Electron、不使用 WebView
+- 支持 YouTube 与 Bilibili 链接解析
+- 支持 `youtu.be`、YouTube Shorts、`b23.tv`、Bilibili 多 P、番剧 `ep/ss`、合集 `ml`
+- 支持在下载前分别选择音频品质和视频品质
 - 支持原始格式下载
 - 支持下载后转码为 H.264 MP4
+- 支持下载中、转码中和完成/失败状态在按钮附近显示
 - 支持保存封面到视频目录
-- 支持下载完成后自动打开目标文件夹
-- 支持代理、Cookie 与健康检查接口
-- 所有视频相关文件统一保存到 `tmp/<视频标题>/`
+- 支持下载完成后打开目录
+- 支持代理、Cookie、日志、Deno JavaScript 运行时和工具健康检查
+- 所有下载相关文件统一写入 `tmp/<视频标题>/`
 
-## Release 概览
+## 运行要求
 
-当前发布版的目标是提供一个可直接发布到 GitHub 的 Windows 目录版和安装包版：
+- Windows 10 / 11 x64
+- 发布包内已附带 `yt-dlp.exe`、`ffmpeg.exe` 与供 `yt-dlp` 解析 YouTube 使用的 Deno JavaScript 运行时
+- 目录版和安装包版都不要求用户安装 Node.js
+- 目录版和安装包版都不要求用户额外安装 .NET Runtime
 
-- 目录版可直接解压运行
-- 安装包版提供桌面/开始菜单入口
-- 配置和数据文件按发布场景分离
+## 使用方式
 
-## 适用场景
+1. 启动 `VideoInstaller.exe`
+2. 粘贴 YouTube 或 Bilibili 链接
+3. 等待解析结果加载完成
+4. 选择原始下载，或选择下载并转码为 H.264 MP4
+5. 用音频/视频下拉框确认当前组合后开始下载
+6. 按需保存封面或打开输出目录
 
-这个项目适合在 Windows 本地部署，作为一个轻量、可控、可自定义配置的视频下载工具使用。
+## Native 目录版
 
-你可以通过浏览器访问本地 Web UI，完成以下流程：
+目录结构：
 
-1. 输入 YouTube 或 Bilibili 视频链接
-2. 查看可用音频 / 视频格式
-3. 选择原始下载，或下载后转码为 H.264 MP4
-4. 保存封面、查看元数据，并直接打开落盘目录
-
-## 环境要求
-
-- Windows 10 / 11
-- Node.js 18+
-- `yt-dlp.exe`
-- `ffmpeg.exe`
-
-开发环境推荐工具路径：
-
-- `C:/Tools/yt-dlp.exe`
-- `C:/Tools/ffmpeg/bin/ffmpeg.exe`
-
-## 安装
-
-```powershell
-git clone https://github.com/Alexis-ray/VideoInstaller.git
-cd VideoInstaller
-npm install
+```text
+VideoInstaller-v2.0.1-win-x64/
+  VideoInstaller.exe
+  config.json
+  cookies.txt
+  logs/
+  tmp/
+  tools/
+    yt-dlp.exe
+    ffmpeg.exe
+    js-runtime/
+      deno.exe
 ```
 
-## 快速开始
+说明：
 
-1. 根据你的环境修改根目录 `config.json`
-2. 确认 `yt-dlp` 与 `ffmpeg` 可执行文件路径正确
-3. 启动服务：
+- 解压后直接运行 `VideoInstaller.exe`
+- 配置、Cookie、日志和下载目录都保存在目录版自身目录下
+- 目录版运行模式会优先识别发布目录，不会再误回退到仓库根目录
+- 适合直接解压使用，或手动管理程序与数据目录
 
-```powershell
-npm start
-```
+## Native 安装包版
 
-默认访问地址：
+说明：
 
-- `http://127.0.0.1:2878`
+- 默认安装到 `%ProgramFiles%\VideoInstaller`
+- 用户配置写入 `%LOCALAPPDATA%\VideoInstaller\config.json`
+- Cookie 写入 `%LOCALAPPDATA%\VideoInstaller\cookies.txt`
+- 下载目录写入 `%LOCALAPPDATA%\VideoInstaller\tmp\`
+- 日志目录写入 `%LOCALAPPDATA%\VideoInstaller\logs\`
+- 程序文件仍从安装目录下 `tools\` 读取 `yt-dlp.exe`、`ffmpeg.exe` 与 Deno JavaScript 运行时
 
-## 配置说明
+## 配置文件
 
-项目根目录下的 `config.json` 用于管理主要配置：
+默认 `config.json`：
 
 ```json
 {
-  "port": 2878,
-  "address": "127.0.0.1",
   "runtimeMode": "portable",
   "tmpDir": "tmp",
   "cookie": "cookies.txt",
-  "disable": false,
-  "proxy": "http://127.0.0.1:7890",
+  "proxy": "",
   "proxyFallbackDirect": true,
-  "ytDlpPath": "C:/Tools/yt-dlp.exe",
-  "ffmpegPath": "C:/Tools/ffmpeg/bin/ffmpeg.exe",
+  "ytDlpPath": "tools/yt-dlp.exe",
+  "ffmpegPath": "tools/ffmpeg.exe",
+  "jsRuntimePath": "tools/js-runtime/deno.exe",
   "thumbnailTimeout": 8000,
   "taskTimeout": {
     "parse": 60000,
@@ -96,175 +106,70 @@ npm start
 }
 ```
 
-### 关键字段
+字段说明：
 
 | 字段 | 说明 |
 | --- | --- |
-| `port` / `address` | 服务监听地址 |
-| `runtimeMode` | 运行模式：`portable` 写程序目录，`installed` 优先写 `%LOCALAPPDATA%\VideoInstaller\` |
-| `tmpDir` | 下载与相关文件保存目录 |
+| `runtimeMode` | `portable` 或 `installed` |
+| `tmpDir` | 下载目录 |
 | `cookie` | Cookie 文件路径 |
-| `proxy` | 代理地址 |
+| `proxy` | 代理地址，留空表示直连 |
 | `proxyFallbackDirect` | 代理失败后是否回退直连 |
-| `ytDlpPath` | `yt-dlp` 可执行文件路径 |
-| `ffmpegPath` | `ffmpeg` 可执行文件路径 |
-| `thumbnailTimeout` | 封面抓取超时时间（毫秒） |
-| `taskTimeout.parse` | 解析任务超时 |
-| `taskTimeout.download` | 下载 / 转码任务超时 |
-| `diskCleanupThreshold` | 临时目录所在磁盘占用超过该阈值时，空闲状态下自动清理 `tmp` |
+| `ytDlpPath` | `yt-dlp.exe` 路径 |
+| `ffmpegPath` | `ffmpeg.exe` 路径 |
+| `jsRuntimePath` | Deno JavaScript 运行时路径，供 yt-dlp 解析 YouTube 使用 |
+| `thumbnailTimeout` | 封面抓取超时，单位毫秒 |
+| `taskTimeout.parse` | 解析超时，单位毫秒 |
+| `taskTimeout.download` | 下载和转码超时，单位毫秒 |
+| `diskCleanupThreshold` | 磁盘清理阈值 |
 
-## 站点支持范围
+## Cookie
 
-### YouTube
+- 首次启动会自动生成空白 `cookies.txt`
+- 文件采用 Netscape Cookie 格式
+- 遇到 YouTube 真人验证、登录验证、会员内容、区域限制或 Bilibili 需要登录态的内容时，可替换为浏览器导出的 Cookie 文件
+- Cookie 文件路径可在设置页查看；目录版位于解压目录，安装版位于 `%LOCALAPPDATA%\VideoInstaller\cookies.txt`
 
-- 标准视频页
-- Shorts
-- `youtu.be` 短链
+## YouTube 常见失败处理
 
-来源类型：
+- 默认不配置代理，直接访问网络；如果你的网络环境需要代理，可在设置页按需填写代理地址
+- 如果提示需要登录或确认不是机器人，请把已登录浏览器导出的 Netscape 格式 Cookie 保存到设置页显示的 Cookie 路径
+- 如果提示 JavaScript 运行时不可用，请确认发布包内存在 `tools/js-runtime/deno.exe`
+- 如果出现 SSL/EOF/TLS 相关错误，优先检查代理设置、代理证书和本机网络环境；未使用代理时请保持代理地址为空
 
-- `youtube-watch`
-- `youtube-short`
-- `youtube-shortlink`
+## 常见问题
 
-### Bilibili
+- `yt-dlp.exe` 缺失：请确认 `tools/yt-dlp.exe` 存在
+- `ffmpeg.exe` 缺失：请确认 `tools/ffmpeg.exe` 存在
+- `config.json` 损坏：程序会自动备份并重建默认配置
+- 代理不可用：可清空 `proxy` 改为直连，或确认代理软件和证书配置正常
+- YouTube 提示不是机器人：请导入有效 YouTube Cookie 后重试
+- YouTube 提示缺少 JavaScript 运行时：请确认 `tools/js-runtime/deno.exe` 存在
+- Bilibili 内容解析失败：可能需要有效 Cookie
 
-- 普通视频：`video/BV...`、`video/av...`
-- 短链：`b23.tv`
-- 分 P / 多 P 视频
-- 番剧：`bangumi/play/ep...`、`bangumi/play/ss...`
-- 合集：`medialist/play/ml...`
+## 验证与构建
 
-来源类型：
+仓库内发布前自动验证命令：
 
-- `bilibili-video`
-- `bilibili-short`
-- `bilibili-part`
-- `bilibili-multi-part`
-- `bilibili-bangumi-episode`
-- `bilibili-bangumi-season`
-- `bilibili-medialist`
-
-## 下载与文件保存规则
-
-- 所有视频相关文件保存到 `tmp/<视频标题>/`
-- 同一目录中可能包含：视频文件、音频文件、封面图、`*.info.json` 元数据文件
-- 转码模式下会额外生成最终 `H.264 MP4` 文件
-- 下载完成后，接口返回的 `video` / `audio` 字段基于实际落盘文件检测结果生成
-
-## 代理与 Cookie 策略
-
-默认策略如下：
-
-- YouTube：默认走代理
-- Bilibili：默认直连
-
-更多细节：
-
-- 健康检查接口会返回 `sitePolicy`，可直接查看不同站点的代理策略
-- Bilibili 部分清晰度、会员内容或区域限制内容可能要求登录态
-- 建议使用浏览器导出的 Netscape 格式 `cookies.txt`
-- 源码运行、便携版和安装版在缺少 `cookies.txt` 时都会自动生成空白模板
-
-## Web UI 说明
-
-前端页面支持：
-
-- 解析结果展示
-- 音频 / 视频格式选择
-- 分 P 选择与重新解析
-- 来源类型标签展示
-- 原始下载与转码下载
-- 单独流下载
-- 封面保存
-- 下载完成态结果展示
-
-## 接口说明
-
-### 健康检查
-
-```text
-GET /y2b/health
+```powershell
+dotnet test desktop-native/VideoInstaller.Desktop.sln
+dotnet build desktop-native/VideoInstaller.Desktop.sln -c Release
+npm run check
+powershell -ExecutionPolicy Bypass -File scripts/build-native-portable.ps1
+powershell -ExecutionPolicy Bypass -File scripts/build-native-installer.ps1
 ```
 
-返回服务运行状态、工具状态、代理配置、运行目录、Cookie 状态与当前任务信息。
+## Legacy Web 版
 
-### 解析视频
+仓库仍保留旧 `Node.js + Express + 浏览器 Web UI` 实现，作为兼容发布线：
 
-```text
-GET /y2b/parse?url=<视频链接>
-```
-
-返回结果中会包含：
-
-- `source`
-- `sourceType`
-- `parts`
-
-### 下载视频
-
-```text
-GET /y2b/download?website=y2b|b2b&v=<id>&format=<videoId>x<audioId>&transcode=0|1&source=<源链接可选>
-```
+- `index.js`
+- `static/`
+- `scripts/build-portable.ps1`
+- `scripts/build-installer.ps1`
 
 说明：
 
-- `transcode=0`：原始下载
-- `transcode=1`：下载后转码为 H.264 MP4
-- 当解析来源为番剧、合集或分 P 页面时，建议携带 `source` 参数保持来源上下文
-
-### 保存封面
-
-```text
-GET /y2b/thumbnail?website=y2b|b2b&v=<id>&title=<标题>&src=<封面源>&save=1
-```
-
-## 常用命令
-
-```powershell
-npm run check
-npm run health
-npm start
-npm run release:tools
-npm run release:portable
-npm run release:installer
-```
-
-## Windows 发布
-
-推荐顺序：先目录版，再安装包版。
-
-1. 运行 `npm install`
-2. 运行 `npm run release:tools`
-3. 运行 `npm run release:portable`
-4. 运行 `npm run release:installer`
-
-目录版输出：
-
-```text
-release/
-  VideoInstaller-win-x64/
-    VideoInstaller.exe
-    config.json
-    cookies.txt
-    static/
-    tools/
-    tmp/
-```
-
-安装包版会创建开始菜单入口、可选桌面快捷方式和卸载入口。
-
-## 发布前验证建议
-
-1. 执行 `npm run check`
-2. 启动服务并访问首页
-3. 执行 `npm run health`
-4. 手动测试一个 YouTube 链接解析与下载
-5. 手动测试一个 Bilibili 链接解析与下载
-6. 验证原始下载、转码下载、封面保存与分 P 切换
-
-## 版本说明
-
-- `v1.1.0`：完成 YouTube / Bilibili 双站点能力整合
-- `v1.1.1`：聚焦稳定性、交互反馈与项目文档成品化整理
-- `v1.1.2`：清理 blacklist 链路，整理发布文档并强化 GitHub 发布呈现
+- Native 桌面版是当前主发布线
+- Legacy 产物继续跟随 `v2.0.1` 版本号发布，并统一使用 `legacy` 文件名前缀
+- Deno JavaScript 运行时是 native 发布线为 YouTube 兼容性补充的保障项，不属于 legacy Web 线运行前提

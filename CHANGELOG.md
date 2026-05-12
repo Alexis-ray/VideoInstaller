@@ -1,8 +1,56 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [v2.0.1] - 2026-05-10
 
-项目说明见 [`README.md`](README.md)。
+原生桌面首发后的兼容性修复版本，重点收口 YouTube 解析、默认代理和发布包工具依赖问题。
+
+### Fixed
+
+- 将 native 默认代理改为空，避免没有本地代理的用户开箱即走 `127.0.0.1:7890` 导致 SSL/EOF 等网络异常。
+- 为 native 发布包接入 Deno JavaScript 运行时，并让 `yt-dlp` 使用 `--js-runtimes` 获得更好的 YouTube 提取兼容性。
+- 将 YouTube 真人验证、Cookie 缺失、JS runtime 缺失和 TLS/EOF 问题映射为更可执行的中文提示。
+
+### Changed
+
+- 设置页新增 JS runtime 状态、Cookie 状态和代理直连说明。
+- 原生目录版和安装包版产物命名提升到 `VideoInstaller-v2.0.1-win-x64`。
+- Legacy Web 线版本号同步提升到 `v2.0.1`，继续作为非主线兼容产物保留。
+- 补强 `.gitignore`，覆盖本地交接清单、运行 Cookie、release-tools 子目录工具和证书/密钥类敏感文件。
+
+### Release notes
+
+- `README.md`、`docs/release-notes-v2.0.1.md`、打包脚本中的发布说明与产物命名同步到 `v2.0.1`。
+
+## [v2.0.0] - 2026-05-09
+
+首个 Windows 原生桌面发布版。项目主线从 `Node.js + Express + 浏览器 Web UI` 迁移到 `WPF + .NET 8`，主流程不再依赖浏览器界面。
+
+### Added
+
+- 新增 `desktop-native/` 原生桌面工程、WPF 主窗口和单元测试工程
+- 新增配置、路径、Cookie、日志、工具检查、URL 识别、解析、下载、转码、封面保存、分 P、打开目录等桌面服务
+- 新增原生目录版构建脚本 `scripts/build-native-portable.ps1`
+- 新增原生安装包构建脚本 `scripts/build-native-installer.ps1`
+- 新增原生安装器脚本 `scripts/installer-native.iss`
+- 新增 `v2.0.0` 发布说明
+
+### Changed
+
+- README 主线切换为 Windows 原生桌面版
+- 发布产物命名统一为 `VideoInstaller-v2.0.0-win-x64.zip` 和 `VideoInstaller-v2.0.0-win-x64-setup.exe`
+- 安装版运行模式改为优先读取 `%LOCALAPPDATA%\VideoInstaller\config.json`
+- `desktop-native` 项目版本号统一为 `2.0.0`
+- 下载界面改为通过音频/视频下拉框明确选择组合格式，不再依赖表格行选中态
+- 下载、转码、保存封面等结果状态统一显示在按钮附近，不再覆盖顶部解析状态
+- 发布目录路径判定修复为优先识别 portable 包内容，避免误写入仓库根目录 `tmp/`
+- 下载期间禁用重复触发按钮，避免并发写入同一输出目录
+- 下载结果扫描按完整下载、单音频、单视频、转码模式分别识别主文件
+
+### Compatibility
+
+- 保留旧 `index.js`、`static/` 和 npm Web 发布脚本作为 `legacy` 代码路径
+- `v2.0.0` 主发布线不再要求用户安装 Node.js，不再通过浏览器访问本地 Web UI
+- Legacy Web 发布线版本号同步提升到 `v2.0.0`，并改用 `VideoInstaller-legacy-v2.0.0-win-x64` / `VideoInstaller-legacy-v2.0.0-win-x64-setup.exe` 命名
 
 ## [v1.1.2] - 2026-05-07
 
@@ -63,42 +111,6 @@ All notable changes to this project will be documented in this file.
 - 支持健康检查、代理配置和 Cookie 文件
 - 更新依赖：`express` 升级至 `4.22.1`，审计问题已修复
 
-### 运行策略
-
-- YouTube 默认使用代理，Bilibili 默认直连
-- 下载目录统一为 `tmp/<视频标题>/`
-- 解析结果中会返回来源类型、分P列表与来源链接上下文
-
-### 说明
-
-- `v1.0.0` 保留为首个稳定基线
-- `v1.1.0` 是在不破坏既有流程基础上的功能扩展版本
-- 该版本将 YouTube/Bilibili 的来源类型展示、边界解析与下载返回字段进行统一
-
 ## [v1.0.0] - 2026-04-21
 
 这是项目的第一个正式版本，也是当前仓库的正式发布版本。
-
-### 功能范围
-
-- 仅支持 YouTube 视频下载
-- 支持解析视频并列出可用格式
-- 支持原始下载
-- 支持下载后转码为 H.264 MP4
-- 支持封面保存到视频同目录
-- 支持下载完成后自动打开目标目录
-- 支持下载并转码完成后自动打开目标目录
-- 支持代理配置和 Cookie 文件
-- 支持健康检查接口
-
-### 代理配置
-
-需要准备一个可用的本地代理地址，并在 `config.json` 中填写对应的 `proxy` 值。当前默认值为 `http://127.0.0.1:7890`。
-
-### 版本命名方案
-
-后续版本统一使用语义化版本号（SemVer）：`vMAJOR.MINOR.PATCH`
-
-- `MAJOR`：出现不兼容变更，或项目定位/核心流程发生明显调整
-- `MINOR`：新增功能，但保持现有用法兼容
-- `PATCH`：修复 bug、提升稳定性、微调文案或细节

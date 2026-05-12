@@ -1,6 +1,6 @@
 {
   "name": "@develon/youtube-dl-rest",
-  "version": "1.1.2",
+  "version": "2.0.1",
   "bin": "index.js",
   "description": "Windows YouTube and Bilibili video downloader",
   "scripts": {
@@ -9,6 +9,8 @@
     "release:tools": "powershell -ExecutionPolicy Bypass -File scripts/download-release-tools.ps1",
     "release:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "release:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
+    "release:native:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-native-portable.ps1",
+    "release:native:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-native-installer.ps1",
     "start:dev": "nodemon index.js",
     "start": "node index.js"
   },
