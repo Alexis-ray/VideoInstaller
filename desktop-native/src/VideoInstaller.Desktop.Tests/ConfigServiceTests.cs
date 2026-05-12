@@ -16,8 +16,9 @@ public sealed class ConfigServiceTests
 
         config.RuntimeMode.Should().Be("portable");
         config.TmpDir.Should().Be("tmp");
+        config.DownloadDir.Should().Be("downloads");
         config.Cookie.Should().Be("cookies.txt");
-        config.Proxy.Should().BeEmpty();
+        config.Proxy.Should().Be("http://127.0.0.1:7890");
         config.ProxyFallbackDirect.Should().BeTrue();
         config.YtDlpPath.Should().Be("tools/yt-dlp.exe");
         config.FfmpegPath.Should().Be("tools/ffmpeg.exe");
@@ -101,6 +102,7 @@ public sealed class ConfigServiceTests
             var config = service.LoadOrCreate(paths);
 
             config.TmpDir.Should().Be("tmp");
+            config.DownloadDir.Should().Be("downloads");
             config.YtDlpPath.Should().Be("tools/yt-dlp.exe");
             config.JsRuntimePath.Should().Be("tools/js-runtime/deno.exe");
         }

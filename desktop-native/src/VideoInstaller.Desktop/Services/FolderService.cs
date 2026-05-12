@@ -5,17 +5,26 @@ namespace VideoInstaller.Desktop.Services;
 
 public sealed class FolderService
 {
-    public void OpenFolder(string path, string tmpRoot)
+    public void OpenFolder(string path, params string[] allowedRoots)
     {
         var targetPath = File.Exists(path) ? Path.GetDirectoryName(path)! : path;
         var normalizedTarget = NormalizePath(targetPath);
-        var normalizedRoot = NormalizePath(tmpRoot);
-        var prefix = normalizedRoot + Path.DirectorySeparatorChar;
+        var normalizedRoots = allowedRoots
+            .Where(root => !string.IsNullOrWhiteSpace(root))
+            .Select(NormalizePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        if (!string.Equals(normalizedTarget, normalizedRoot, StringComparison.OrdinalIgnoreCase)
-            && !normalizedTarget.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        var isAllowed = normalizedRoots.Any(root =>
         {
-            throw new InvalidOperationException("仅允许打开 tmp 目录下的文件夹");
+            var prefix = root + Path.DirectorySeparatorChar;
+            return string.Equals(normalizedTarget, root, StringComparison.OrdinalIgnoreCase)
+                || normalizedTarget.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        });
+
+        if (!isAllowed)
+        {
+            throw new InvalidOperationException("仅允许打开下载目录或临时目录下的文件夹");
         }
 
         if (!Directory.Exists(targetPath))

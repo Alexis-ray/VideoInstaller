@@ -27,7 +27,7 @@ public sealed class HealthService
             CookieReadable = cookieReadable,
             CookieHasContent = cookieHasContent,
             ProxySummary = proxySummary,
-            TmpWritable = Directory.Exists(paths.TmpDir),
+            TmpWritable = Directory.Exists(paths.TmpDir) && Directory.Exists(paths.DownloadDir),
             SummaryMessage = ytDlp.Ok && ffmpeg.Ok && jsRuntime.Ok ? "Tools ready" : "Tool check failed"
         };
     }

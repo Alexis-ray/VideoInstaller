@@ -29,9 +29,11 @@ if (-not $isccPath) {
     throw 'ISCC.exe was not found. Install Inno Setup 6 first.'
 }
 
+"Building native installer from release\VideoInstaller-v$version-win-x64 (final user-facing release root)."
 & $isccPath "/DMyAppVersion=$version" "/DMyPortableRootName=VideoInstaller-v$version-win-x64" "/DMyOutputBaseFilename=VideoInstaller-v$version-win-x64-setup" $installerScript
 if ($LASTEXITCODE -ne 0) {
     throw 'Inno Setup build failed'
 }
 
 "Installer built: release\VideoInstaller-v$version-win-x64-setup.exe"
+"Do not use release-build as the native runtime entry. Ship the setup exe above or the release\VideoInstaller-v$version-win-x64 directory."

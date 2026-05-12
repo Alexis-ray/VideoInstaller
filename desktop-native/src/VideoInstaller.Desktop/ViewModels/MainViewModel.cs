@@ -53,7 +53,7 @@ public partial class MainViewModel : ObservableObject
         _logger = logger;
         Settings = new SettingsViewModel(config, paths, healthStatus, configService);
 
-        StatusMessage = $"初始化完成。yt-dlp={(healthStatus.YtDlp.Ok ? "OK" : "FAIL")}，ffmpeg={(healthStatus.Ffmpeg.Ok ? "OK" : "FAIL")}。";
+        StatusMessage = $"初始化完成。yt-dlp={(healthStatus.YtDlp.Ok ? "OK" : "FAIL")}，ffmpeg={(healthStatus.Ffmpeg.Ok ? "OK" : "FAIL")}。当前下载目录：{paths.DownloadDir}";
         StatusKind = "info";
     }
 
@@ -101,6 +101,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string title = "解析结果";
+
+    [ObservableProperty]
+    private string parseNote = string.Empty;
 
     [ObservableProperty]
     private string sourceTypeText = string.Empty;
@@ -236,7 +239,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        _folderService.OpenFolder(DownloadTask.OutputDirectory, _paths.TmpDir);
+        _folderService.OpenFolder(DownloadTask.OutputDirectory, _paths.DownloadDir, _paths.TmpDir);
     }
 
     [RelayCommand]
@@ -282,6 +285,7 @@ public partial class MainViewModel : ObservableObject
 
             _currentParseResult = parseResult;
             Title = parseResult.Title;
+            ParseNote = parseResult.Note;
             SourceTypeText = ToSourceTypeText(parseResult.SourceType);
             ThumbnailUrl = parseResult.ThumbnailCandidates.FirstOrDefault() ?? parseResult.ThumbnailUrl;
 
@@ -491,9 +495,9 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
             var videoId = _currentParseResult?.VideoId ?? Title;
-            var saved = await _thumbnailService.SaveAsync(source, Title, videoId, _paths.TmpDir);
+            var saved = await _thumbnailService.SaveAsync(source, Title, videoId, _paths.DownloadDir);
             DownloadTask.ThumbnailFile = saved;
-            DownloadTask.OutputDirectory = Path.GetDirectoryName(saved) ?? _paths.TmpDir;
+            DownloadTask.OutputDirectory = Path.GetDirectoryName(saved) ?? _paths.DownloadDir;
             SetDownloadStatus("success", $"封面已保存：{saved}");
         }
         catch (Exception ex)

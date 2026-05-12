@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VideoInstaller v1.1.1 | Windows 本地视频解析下载器</title>
+    <title>VideoInstaller v2.2.0 | Windows 本地视频解析下载器</title>
     <link rel="stylesheet" href="./css/style.css">
     <style>
         :root {
@@ -233,12 +233,29 @@
             color: #666;
             font-size: 0.95rem;
         }
+
+        .legacy-banner {
+            margin: 0 auto 18px;
+            max-width: 960px;
+            padding: 14px 16px;
+            border-radius: 10px;
+            background: #fff7e8;
+            border: 1px solid #f3c26b;
+            color: #7a4d00;
+            line-height: 1.7;
+        }
+
+        .legacy-banner strong {
+            display: block;
+            margin-bottom: 6px;
+            color: #6a3e00;
+        }
     </style>
 </head>
 
 <body>
     <div class="title">
-        <div>VideoInstaller v1.1.1</div>
+        <div>VideoInstaller Legacy v2.2.0</div>
         <div class="github">
             <a href="https://github.com/Alexis-ray/VideoInstaller" target="_blank">
                 <svg style="fill: #333" height="32" viewBox="0 0 16 16" version="1.1" width="32" aria-hidden="true">
@@ -248,6 +265,11 @@
                 </svg>
             </a>
         </div>
+    </div>
+
+    <div class="legacy-banner">
+        <strong>当前页面是 legacy Web 兼容线，不是当前主发布的 native 桌面版。</strong>
+        Native 主发布线是 `release/` 目录中的 Windows 桌面程序与安装包；如果你只是想正常使用当前版本，请优先运行 native 发布产物，不要把 `npm start` 或 `release-build/VideoInstaller.exe` 当成主程序入口。
     </div>
 
     <div id="divURL">
@@ -324,8 +346,9 @@
         <h3 id="waitTranscodeText">正在转码为 H.264 MP4，请稍候...</h3>
     </div>
     <div id="log">
-        <p>当前版本：v1.1.1，重点提升下载稳定性、完成态反馈、健康检查信息与整体成品化体验。</p>
+        <p>当前版本：Legacy v2.2.0。本页面仅作为兼容保留的 Web 入口，当前主发布线为 native Windows 桌面版。</p>
         <p>支持 YouTube 与 Bilibili 双站点解析下载，可保留原始文件，也可统一转码为更通用的 H.264 MP4。</p>
+        <p>如果你是从 `release-build/VideoInstaller.exe` 或 `npm start` 进入这里，请改用 `release/` 中的 native 发布产物来判断桌面版是否正常。</p>
     </div>
 
     <script src="js/jquery.js"></script>

@@ -1,6 +1,6 @@
 {
   "name": "@develon/youtube-dl-rest",
-  "version": "2.0.1",
+  "version": "2.2.0",
   "bin": "index.js",
   "description": "Windows YouTube and Bilibili video downloader",
   "scripts": {

@@ -30,10 +30,19 @@ public sealed class YtDlpService
         var inputUrl = target.SourceUrl;
         var args = BuildBaseArgs(paths);
         args.AddRange(["--print-json", "--skip-download", inputUrl]);
-        var cookieArgs = File.Exists(paths.CookiePath) ? new[] { "--cookies", paths.CookiePath } : Array.Empty<string>();
+        var hasUsableCookie = HasUsableCookie(paths.CookiePath);
+        var cookieArgs = hasUsableCookie ? new[] { "--cookies", paths.CookiePath } : Array.Empty<string>();
         var siteArgs = _proxyPolicyService.GetSiteYtDlpArgs(target.Website);
         var proxy = _proxyPolicyService.GetProxyForWebsite(target.Website, config);
         var timeout = config.TaskTimeout.Parse;
+
+        _logger.LogInformation(
+            "yt-dlp parse start. Website={Website} Cookie={HasCookie} CookiePath={CookiePath} Proxy={HasProxy} SiteArgs={SiteArgs}",
+            target.Website,
+            hasUsableCookie,
+            paths.CookiePath,
+            !string.IsNullOrWhiteSpace(proxy),
+            string.Join(" ", siteArgs));
 
         var result = await RunParseAsync(paths.YtDlpPath, args, cookieArgs, siteArgs, proxy, _proxyPolicyService.ShouldEnableProxyFallback(target.Website, config), timeout, cancellationToken);
         if (result.ExitCode != 0)
@@ -64,6 +73,16 @@ public sealed class YtDlpService
             ? _formatMapperService.ParseFormats(formats)
             : (new List<MediaFormat>(), new List<MediaFormat>());
 
+        _logger.LogInformation(
+            "yt-dlp parse mapped formats. Website={Website} RawCount={RawCount} AudioCount={AudioCount} VideoCount={VideoCount}",
+            website,
+            playable.info.TryGetProperty("formats", out var rawFormats) && rawFormats.ValueKind == JsonValueKind.Array ? rawFormats.GetArrayLength() : 0,
+            audios.Count,
+            videos.Count);
+
+        var note = BuildParseNote(target.Website, hasUsableCookie, paths.CookiePath, siteArgs, proxy, audios.Count, videos.Count,
+            playable.info.TryGetProperty("formats", out rawFormats) && rawFormats.ValueKind == JsonValueKind.Array ? rawFormats.GetArrayLength() : 0);
+
         return new VideoParseResult
         {
             Success = true,
@@ -78,14 +97,14 @@ public sealed class YtDlpService
             Parts = playable.parts,
             Audios = audios,
             Videos = videos,
-            Note = "可选择原始格式下载，或转码为H.264 MP4下载"
+            Note = note
         };
     }
 
     public async Task<DownloadResult> DownloadAsync(DownloadRequest request, AppConfig config, RuntimePaths paths, CancellationToken cancellationToken = default)
     {
         var safeTitle = FileNameSanitizer.Sanitize(request.Title, request.VideoId);
-        var outputDir = Path.Combine(paths.TmpDir, safeTitle);
+        var outputDir = Path.Combine(paths.DownloadDir, safeTitle);
         Directory.CreateDirectory(outputDir);
         var fileBase = string.IsNullOrWhiteSpace(request.PartIndex) ? safeTitle : $"{safeTitle}-p{request.PartIndex}";
         var outputTemplate = Path.Combine(outputDir, $"{fileBase}.%(ext)s");
@@ -112,9 +131,17 @@ public sealed class YtDlpService
 
         args.Add(request.SourceUrl);
 
-        var cookieArgs = File.Exists(paths.CookiePath) ? new[] { "--cookies", paths.CookiePath } : Array.Empty<string>();
+        var hasUsableCookie = HasUsableCookie(paths.CookiePath);
+        var cookieArgs = hasUsableCookie ? new[] { "--cookies", paths.CookiePath } : Array.Empty<string>();
         var siteArgs = _proxyPolicyService.GetSiteYtDlpArgs(request.Website);
         var proxy = _proxyPolicyService.GetProxyForWebsite(request.Website, config);
+        _logger.LogInformation(
+            "yt-dlp download start. Website={Website} OutputDir={OutputDir} Cookie={HasCookie} Proxy={HasProxy} Format={Format}",
+            request.Website,
+            outputDir,
+            hasUsableCookie,
+            !string.IsNullOrWhiteSpace(proxy),
+            string.IsNullOrWhiteSpace(request.SingleFormatId) ? $"{request.VideoFormatId}+{request.AudioFormatId}" : request.SingleFormatId);
         var result = await RunParseAsync(paths.YtDlpPath, args, cookieArgs, siteArgs, proxy, _proxyPolicyService.ShouldEnableProxyFallback(request.Website, config), config.TaskTimeout.Download, cancellationToken);
         if (result.ExitCode != 0)
         {
@@ -192,6 +219,28 @@ public sealed class YtDlpService
 
         _logger.LogInformation("yt-dlp parse direct for {Url}", args.LastOrDefault());
         return await _processRunner.RunAsync(ytDlpPath, commandArgs, Path.GetDirectoryName(ytDlpPath), timeout, cancellationToken);
+    }
+
+    private static bool HasUsableCookie(string cookiePath)
+    {
+        return File.Exists(cookiePath)
+            && File.ReadLines(cookiePath).Any(line => !string.IsNullOrWhiteSpace(line) && !line.TrimStart().StartsWith('#'));
+    }
+
+    private static string BuildParseNote(string website, bool hasUsableCookie, string cookiePath, IReadOnlyList<string> siteArgs, string proxy, int audioCount, int videoCount, int rawCount)
+    {
+        var siteName = string.Equals(website, "b2b", StringComparison.OrdinalIgnoreCase) ? "Bilibili" : "YouTube";
+        var cookieText = hasUsableCookie
+            ? $"本次解析已传入 Cookie：{cookiePath}。"
+            : $"本次解析未传入有效 Cookie（{cookiePath} 当前为空模板或没有有效内容）。{siteName} 的登录态、会员态或受限清晰度因此可能不会完整显示。";
+        var siteArgsText = siteArgs.Count > 0
+            ? $"站点附加参数：{string.Join(' ', siteArgs)}。"
+            : "当前未使用站点专属 yt-dlp 附加参数。";
+        var proxyText = string.IsNullOrWhiteSpace(proxy)
+            ? "当前未配置代理，按直连方式解析。"
+            : $"当前解析代理：{proxy}。";
+
+        return $"可选择原始格式下载，或转码为 H.264 MP4 下载。原始 formats 数量：{rawCount}；映射后音频 {audioCount} 项、视频 {videoCount} 项。{cookieText}{siteArgsText}{proxyText}";
     }
 
     private static string? ParseAnyJsonLine(string text)

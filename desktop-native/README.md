@@ -1,24 +1,24 @@
 # VideoInstaller Native Desktop
 
-This directory contains the native Windows desktop application for `VideoInstaller`.
+This directory contains the current primary application for VideoInstaller.
 
-## Scope
+## Overview
 
 - Framework: `WPF + .NET 8`
 - Target: `win-x64`
-- Runtime model: self-contained desktop release
+- Release model: self-contained Windows desktop app
 - UI rule: no browser, no Electron, no WebView
-
-## Current status
-
-- `S00` baseline documentation is recorded under `docs/native-migration/`.
-- `S01-S13` core desktop migration is implemented in `src/` and covered by unit tests.
-- Native release packaging is driven by `scripts/build-native-portable.ps1` and `scripts/build-native-installer.ps1`.
 
 ## Projects
 
-- `src/VideoInstaller.Desktop/`: WPF application
+- `src/VideoInstaller.Desktop/`: desktop application
 - `src/VideoInstaller.Desktop.Tests/`: unit tests for non-UI logic
+
+## Related docs
+
+- Root project overview: `../README.md`
+- Current release notes: `../docs/release-notes-v2.2.0.md`
+- Migration archive: `../docs/native-migration/`
 
 ## Build
 

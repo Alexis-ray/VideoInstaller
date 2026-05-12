@@ -1,70 +1,48 @@
 # Changelog
 
-## [v2.0.1] - 2026-05-10
-
-原生桌面首发后的兼容性修复版本，重点收口 YouTube 解析、默认代理和发布包工具依赖问题。
-
-### Fixed
-
-- 将 native 默认代理改为空，避免没有本地代理的用户开箱即走 `127.0.0.1:7890` 导致 SSL/EOF 等网络异常。
-- 为 native 发布包接入 Deno JavaScript 运行时，并让 `yt-dlp` 使用 `--js-runtimes` 获得更好的 YouTube 提取兼容性。
-- 将 YouTube 真人验证、Cookie 缺失、JS runtime 缺失和 TLS/EOF 问题映射为更可执行的中文提示。
-
-### Changed
-
-- 设置页新增 JS runtime 状态、Cookie 状态和代理直连说明。
-- 原生目录版和安装包版产物命名提升到 `VideoInstaller-v2.0.1-win-x64`。
-- Legacy Web 线版本号同步提升到 `v2.0.1`，继续作为非主线兼容产物保留。
-- 补强 `.gitignore`，覆盖本地交接清单、运行 Cookie、release-tools 子目录工具和证书/密钥类敏感文件。
-
-### Release notes
-
-- `README.md`、`docs/release-notes-v2.0.1.md`、打包脚本中的发布说明与产物命名同步到 `v2.0.1`。
-
-## [v2.0.0] - 2026-05-09
-
-首个 Windows 原生桌面发布版。项目主线从 `Node.js + Express + 浏览器 Web UI` 迁移到 `WPF + .NET 8`，主流程不再依赖浏览器界面。
+## [v2.2.0] - 2026-05-12
 
 ### Added
 
-- 新增 `desktop-native/` 原生桌面工程、WPF 主窗口和单元测试工程
-- 新增配置、路径、Cookie、日志、工具检查、URL 识别、解析、下载、转码、封面保存、分 P、打开目录等桌面服务
-- 新增原生目录版构建脚本 `scripts/build-native-portable.ps1`
-- 新增原生安装包构建脚本 `scripts/build-native-installer.ps1`
-- 新增原生安装器脚本 `scripts/installer-native.iss`
-- 新增 `v2.0.0` 发布说明
+- 安装包支持在安装阶段预先设置下载目录与代理
+- 解析结果页新增格式诊断说明，展示 Cookie、站点参数、代理以及原始 formats 数量信息
 
 ### Changed
 
-- README 主线切换为 Windows 原生桌面版
-- 发布产物命名统一为 `VideoInstaller-v2.0.0-win-x64.zip` 和 `VideoInstaller-v2.0.0-win-x64-setup.exe`
-- 安装版运行模式改为优先读取 `%LOCALAPPDATA%\VideoInstaller\config.json`
-- `desktop-native` 项目版本号统一为 `2.0.0`
-- 下载界面改为通过音频/视频下拉框明确选择组合格式，不再依赖表格行选中态
-- 下载、转码、保存封面等结果状态统一显示在按钮附近，不再覆盖顶部解析状态
-- 发布目录路径判定修复为优先识别 portable 包内容，避免误写入仓库根目录 `tmp/`
-- 下载期间禁用重复触发按钮，避免并发写入同一输出目录
-- 下载结果扫描按完整下载、单音频、单视频、转码模式分别识别主文件
+- 仓库文档整体重写，收口为更适合 GitHub 展示的 README、更新日志与发布说明结构
+- Native 与 legacy 发布资产命名、安装器默认版本、桌面程序版本号统一切换到 `v2.2.0`
+- Legacy Web 页面文案同步更新到 `v2.2.0`
 
-### Compatibility
+### Fixed
 
-- 保留旧 `index.js`、`static/` 和 npm Web 发布脚本作为 `legacy` 代码路径
-- `v2.0.0` 主发布线不再要求用户安装 Node.js，不再通过浏览器访问本地 Web UI
-- Legacy Web 发布线版本号同步提升到 `v2.0.0`，并改用 `VideoInstaller-legacy-v2.0.0-win-x64` / `VideoInstaller-legacy-v2.0.0-win-x64-setup.exe` 命名
+- 仅在 Cookie 文件包含有效内容时才向 `yt-dlp` 传入 `--cookies`，避免空模板干扰格式探测
+- Native 安装器脚本补齐安装前输入页、路径校验与升级保留配置逻辑
 
-## [v1.1.2] - 2026-05-07
+## [v2.1.0] - 2026-05-12
 
-这是一个面向发布整理的版本，主要做了三件事：移除 blacklist 功能链、整理 GitHub 主页文档、统一 Windows 发布说明。
+### Added
 
-### Cleanup
+- `downloadDir` 配置项与设置页下载目录编辑能力
+- 更完整的 Cookie、代理与格式映射诊断日志
 
-- 删除 `blacklist.txt` 及其在运行时、配置、打包脚本中的所有引用
-- 收敛发布文档结构，保留更适合 GitHub 首页的内容
-- 统一版本号到 `v1.1.2`
+### Changed
 
-## [v1.1.1] - 2026-04-25
+- 默认代理改为预填 `http://127.0.0.1:7890`，同时支持清空后直连
+- 下载目录与临时目录语义分离，发布说明与产物命名同步收口
 
-这是一个以稳定性和成品化体验为重点的补丁版本，主要针对下载完成态、异常输入处理、健康检查信息和前端反馈方式进行打磨。
+## [v2.0.1] - 2026-05-10
+
+### Fixed
+
+- 改善 YouTube 提取兼容性，补充 Deno JavaScript 运行时与相关错误提示
+- 修正默认代理导致的常见网络异常体验
+
+## [v2.0.0] - 2026-05-09
+
+### Added
+
+- 首个 Windows 原生桌面版本，主线迁移到 `WPF + .NET 8`
+- Native 目录版、安装包版与对应构建脚本
 
 ### Backend stability
 

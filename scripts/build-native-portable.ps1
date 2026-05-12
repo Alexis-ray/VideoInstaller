@@ -61,6 +61,7 @@ Copy-Item -LiteralPath $publishRoot -Destination $portableRoot -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $portableRoot 'tools') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $portableRoot 'tools\js-runtime') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $portableRoot 'tmp') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $portableRoot 'downloads') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $portableRoot 'logs') -Force | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $toolsSourceRoot 'yt-dlp.exe') -Destination (Join-Path $portableRoot 'tools\yt-dlp.exe') -Force
@@ -70,8 +71,9 @@ Copy-Item -LiteralPath (Join-Path $toolsSourceRoot 'js-runtime\deno.exe') -Desti
 $portableConfig = @{
     runtimeMode = 'portable'
     tmpDir = 'tmp'
+    downloadDir = 'downloads'
     cookie = 'cookies.txt'
-    proxy = ''
+    proxy = 'http://127.0.0.1:7890'
     proxyFallbackDirect = $true
     ytDlpPath = 'tools/yt-dlp.exe'
     ffmpegPath = 'tools/ffmpeg.exe'
@@ -98,11 +100,23 @@ $releaseNotes = @(
     'Primary release line for VideoInstaller on Windows.',
     'No browser UI, no Node.js runtime, no WebView.',
     'Bundled tools: yt-dlp, ffmpeg, and Deno JavaScript runtime for YouTube extraction.',
-    'Portable mode writes config, cookies, logs, and downloads into the release folder itself.',
-    'Installed mode writes config, cookies, tmp, and logs into %LOCALAPPDATA%\VideoInstaller.',
-    'Legacy Web assets remain available separately as compatibility builds.'
+    'Portable mode writes config, cookies, logs, tmp, and downloads into the release folder itself.',
+    'Installed mode writes config, cookies, tmp, logs, and downloads into %LOCALAPPDATA%\VideoInstaller.',
+    'Legacy Web assets remain available separately as compatibility builds.',
+    'Do not run executables from release-build/ as if they were the native desktop final release.'
 )
 Set-Content -LiteralPath (Join-Path $portableRoot 'release-notes.txt') -Value $releaseNotes -Encoding UTF8
+
+$manifest = @{
+    name = 'VideoInstaller'
+    version = $appVersion
+    releaseLine = 'native-desktop'
+    runtimeMode = 'portable'
+    entry = 'VideoInstaller.exe'
+    generatedAt = (Get-Date).ToString('s')
+    userFacing = $true
+} | ConvertTo-Json -Depth 3
+Set-Content -LiteralPath (Join-Path $portableRoot 'release-manifest.json') -Value $manifest -Encoding UTF8
 
 Compress-Archive -LiteralPath $portableRoot -DestinationPath $zipPath -CompressionLevel Optimal
 

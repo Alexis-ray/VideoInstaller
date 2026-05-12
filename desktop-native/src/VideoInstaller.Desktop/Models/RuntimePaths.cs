@@ -18,6 +18,8 @@ public sealed class RuntimePaths
 
     public string TmpDir { get; init; } = string.Empty;
 
+    public string DownloadDir { get; init; } = string.Empty;
+
     public string LogsDir { get; init; } = string.Empty;
 
     public string ToolsDir { get; init; } = string.Empty;

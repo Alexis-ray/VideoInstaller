@@ -6,9 +6,11 @@ public sealed class AppConfig
 
     public string TmpDir { get; set; } = "tmp";
 
+    public string DownloadDir { get; set; } = "downloads";
+
     public string Cookie { get; set; } = "cookies.txt";
 
-    public string Proxy { get; set; } = string.Empty;
+    public string Proxy { get; set; } = "http://127.0.0.1:7890";
 
     public bool ProxyFallbackDirect { get; set; } = true;
 

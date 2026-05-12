@@ -90,6 +90,8 @@ if (isMainThread) {
         const host = config.address || '127.0.0.1';
         const port = config.port || 2878;
         console.log(`服务已启动，监听: http://${host}:${port}`);
+        console.log('当前运行链路: legacy Web 兼容线（index.js + static/），不是 native WPF 主发布程序');
+        console.log('若要验证当前主版本，请运行 release/ 中的 native VideoInstaller.exe 或对应 setup 安装包');
         console.log(`支持功能: 解析与下载 | 自动H.264 MP4转码 | Windows路径兼容`);
         console.log(`工具状态: yt-dlp=${toolStatus.ytDlp.ok ? 'OK' : 'FAIL'}, ffmpeg=${toolStatus.ffmpeg.ok ? 'OK' : 'FAIL'}`);
     });

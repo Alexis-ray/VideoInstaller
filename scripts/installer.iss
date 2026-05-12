@@ -5,13 +5,13 @@
   #define MyAppExeName "VideoInstaller.exe"
 #endif
 #ifndef MyAppVersion
-  #define MyAppVersion "2.0.1"
+  #define MyAppVersion "2.2.0"
 #endif
 #ifndef MyPortableRootName
-  #define MyPortableRootName "VideoInstaller-legacy-v2.0.1-win-x64"
+  #define MyPortableRootName "VideoInstaller-legacy-v2.2.0-win-x64"
 #endif
 #ifndef MyOutputBaseFilename
-  #define MyOutputBaseFilename "VideoInstaller-legacy-v2.0.1-win-x64-setup"
+  #define MyOutputBaseFilename "VideoInstaller-legacy-v2.2.0-win-x64-setup"
 #endif
 #define MySourceRoot ".."
 #define MyPortableRoot AddBackslash(MySourceRoot) + "release\" + MyPortableRootName

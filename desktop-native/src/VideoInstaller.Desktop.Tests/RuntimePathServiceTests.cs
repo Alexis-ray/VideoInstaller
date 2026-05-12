@@ -15,6 +15,7 @@ public sealed class RuntimePathServiceTests
         result.ConfigPath.Should().EndWith("config.json");
         result.CookiePath.Should().EndWith("cookies.txt");
         result.TmpDir.Should().EndWith("tmp");
+        result.DownloadDir.Should().EndWith("downloads");
         result.LogsDir.Should().EndWith("logs");
     }
 
@@ -28,6 +29,7 @@ public sealed class RuntimePathServiceTests
         {
             RuntimeMode = "installed",
             TmpDir = "downloads-temp",
+            DownloadDir = "downloads-final",
             Cookie = "auth\\cookies.txt",
             YtDlpPath = "tools\\yt-dlp.exe",
             FfmpegPath = "tools\\ffmpeg.exe",
@@ -36,6 +38,7 @@ public sealed class RuntimePathServiceTests
 
         result.RuntimeMode.Should().Be("installed");
         result.TmpDir.Should().EndWith("downloads-temp");
+        result.DownloadDir.Should().EndWith("downloads-final");
         result.CookiePath.Should().EndWith(Path.Combine("auth", "cookies.txt"));
         result.JsRuntimePath.Should().EndWith(Path.Combine("tools", "js-runtime", "deno.exe"));
         result.ConfigPath.Should().EndWith("config.json");
@@ -52,6 +55,7 @@ public sealed class RuntimePathServiceTests
         result.ConfigPath.Should().Contain(Path.Combine("AppData", "Local", "VideoInstaller", "config.json"));
         result.CookiePath.Should().Contain(Path.Combine("AppData", "Local", "VideoInstaller", "cookies.txt"));
         result.TmpDir.Should().Contain(Path.Combine("AppData", "Local", "VideoInstaller", "tmp"));
+        result.DownloadDir.Should().Contain(Path.Combine("AppData", "Local", "VideoInstaller", "downloads"));
         result.JsRuntimePath.Should().EndWith(Path.Combine("tools", "js-runtime", "deno.exe"));
     }
 
@@ -59,7 +63,7 @@ public sealed class RuntimePathServiceTests
     public void ResolveBootstrap_ShouldKeepPortableReleaseUnderRepositorySelfContained()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-        var appRoot = Path.Combine(root, "release", "VideoInstaller-v2.0.1-win-x64");
+        var appRoot = Path.Combine(root, "release", "VideoInstaller-v2.2.0-win-x64");
         Directory.CreateDirectory(Path.Combine(appRoot, "tools"));
 
         try

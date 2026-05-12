@@ -39,7 +39,10 @@ public sealed class ConfigService
     {
         return new AppConfig
         {
-            RuntimeMode = runtimeMode
+            RuntimeMode = runtimeMode,
+            DownloadDir = runtimeMode == "installed"
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoInstaller", "downloads")
+                : "downloads"
         };
     }
 
@@ -59,8 +62,9 @@ public sealed class ConfigService
 
         config.RuntimeMode = string.IsNullOrWhiteSpace(config.RuntimeMode) ? defaults.RuntimeMode : config.RuntimeMode;
         config.TmpDir = string.IsNullOrWhiteSpace(config.TmpDir) ? defaults.TmpDir : config.TmpDir;
+        config.DownloadDir = string.IsNullOrWhiteSpace(config.DownloadDir) ? defaults.DownloadDir : config.DownloadDir;
         config.Cookie = string.IsNullOrWhiteSpace(config.Cookie) ? defaults.Cookie : config.Cookie;
-        config.Proxy = config.Proxy ?? defaults.Proxy;
+        config.Proxy = config.Proxy is null ? defaults.Proxy : config.Proxy.Trim();
         config.YtDlpPath = string.IsNullOrWhiteSpace(config.YtDlpPath) ? defaults.YtDlpPath : config.YtDlpPath;
         config.FfmpegPath = string.IsNullOrWhiteSpace(config.FfmpegPath) ? defaults.FfmpegPath : config.FfmpegPath;
         config.JsRuntimePath = string.IsNullOrWhiteSpace(config.JsRuntimePath) ? defaults.JsRuntimePath : config.JsRuntimePath;

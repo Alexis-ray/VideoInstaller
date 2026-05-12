@@ -50,6 +50,7 @@ public partial class App : Application
             paths = runtimePathService.ResolveForConfig(config, bootstrapPaths);
 
             Directory.CreateDirectory(paths.TmpDir);
+            Directory.CreateDirectory(paths.DownloadDir);
             Directory.CreateDirectory(paths.LogsDir);
             cookieService.EnsureCookieFile(paths);
             var cookieCheck = cookieService.CheckReadable(paths);
@@ -65,6 +66,7 @@ public partial class App : Application
             logger.LogInformation("Config path: {ConfigPath}", health.RuntimePaths.ConfigPath);
             logger.LogInformation("Cookie path: {CookiePath}", health.RuntimePaths.CookiePath);
             logger.LogInformation("Tmp path: {TmpDir}", health.RuntimePaths.TmpDir);
+            logger.LogInformation("Download path: {DownloadDir}", health.RuntimePaths.DownloadDir);
             logger.LogInformation("yt-dlp: {Path} | {Version}", health.YtDlp.Path, health.YtDlp.Version);
             logger.LogInformation("ffmpeg: {Path} | {Version}", health.Ffmpeg.Path, health.Ffmpeg.Version);
             logger.LogInformation("JS runtime: {Path} | {Version}", health.JsRuntime.Path, health.JsRuntime.Version);
