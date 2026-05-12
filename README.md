@@ -2,7 +2,7 @@
 
 Windows 原生桌面视频下载器，支持 YouTube 与 Bilibili 链接解析、格式选择和本地下载。
 
-[更新日志](CHANGELOG.md) · [发布说明](docs/release-notes-v2.2.0.md)
+[更新日志](CHANGELOG.md) · [发布说明](docs/release-notes-v2.2.0.md) · [发布流程](docs/release-workflow.md)
 
 ## 简介
 
@@ -72,8 +72,31 @@ powershell -ExecutionPolicy Bypass -File scripts/build-native-portable.ps1
 powershell -ExecutionPolicy Bypass -File scripts/build-native-installer.ps1
 ```
 
+### 常用发布命令
+
+```powershell
+# 下载 yt-dlp / ffmpeg / Deno 等发布工具
+npm run release:tools
+
+# Legacy Web 兼容线
+npm run release:legacy:portable
+npm run release:legacy:installer
+
+# Native 桌面主线
+npm run release:native:portable
+npm run release:native:installer
+```
+
+如果你想一次跑完整链路，也可以使用：
+
+```powershell
+npm run release:legacy
+npm run release:native
+```
+
 ## 说明
 
 - `release/` 是正式发布资产输出目录
 - `release-build/` 是构建过程中的中间输出目录，不应作为最终发布入口
+- `release-tools/manifest.json` 是当前发布工具清单，其他二进制工具文件不纳入仓库版本控制
 - `npm start` 启动的是 legacy Web 兼容线，不是 native 桌面版
