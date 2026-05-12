@@ -17,7 +17,7 @@ VideoInstaller v2.2.0 是一次发布收口版本，重点提升安装体验、�
 
 #### Legacy compatibility
 
-- `VideoInstaller-legacy-v2.2.0-win-x64/`
+- `VideoInstaller-legacy-v2.2.0-win-x64.zip`
 - `VideoInstaller-legacy-v2.2.0-win-x64-setup.exe`
 
 ### Notes

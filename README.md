@@ -30,7 +30,7 @@ VideoInstaller 当前主线是基于 `WPF + .NET 8 + yt-dlp + ffmpeg` 的 Window
 
 ### Legacy Web 兼容版
 
-- 目录版：`VideoInstaller-legacy-v2.2.0-win-x64/`
+- 目录版：`VideoInstaller-legacy-v2.2.0-win-x64.zip`
 - 安装包版：`VideoInstaller-legacy-v2.2.0-win-x64-setup.exe`
 
 Legacy 版本仅用于兼容保留，不是当前主发布形态。
