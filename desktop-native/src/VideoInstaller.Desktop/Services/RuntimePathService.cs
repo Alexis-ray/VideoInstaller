@@ -5,6 +5,13 @@ namespace VideoInstaller.Desktop.Services;
 
 public sealed class RuntimePathService
 {
+    private const string InstalledDataRootMarkerFileName = "data-root.txt";
+
+    public string GetDefaultInstalledDataRoot()
+    {
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoInstaller");
+    }
+
     public RuntimePaths ResolveBootstrap(string? forcedRuntimeMode = null)
     {
         return ResolveBootstrap(AppContext.BaseDirectory, forcedRuntimeMode);
@@ -14,7 +21,7 @@ public sealed class RuntimePathService
     {
         var appRootDir = NormalizeDir(appBaseDirectory);
         var projectRootDir = FindProjectRoot(appRootDir);
-        var localDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoInstaller");
+        var localDataDir = GetDefaultInstalledDataRoot();
         var isInstalled = string.Equals(forcedRuntimeMode, "installed", StringComparison.OrdinalIgnoreCase);
         var isPortableBundle = IsPortableBundle(appRootDir);
         var isDevelopment = !isInstalled && !isPortableBundle && IsDevelopmentBinDirectory(appRootDir);
@@ -22,11 +29,9 @@ public sealed class RuntimePathService
             ? "installed"
             : "portable";
         var dataRootDir = runtimeMode == "installed"
-            ? localDataDir
+            ? ResolveBootstrapInstalledDataRoot(appRootDir, localDataDir)
             : isDevelopment && projectRootDir is not null ? projectRootDir : appRootDir;
-        var configPath = runtimeMode == "installed"
-            ? Path.Combine(localDataDir, "config.json")
-            : Path.Combine(dataRootDir, "config.json");
+        var configPath = Path.Combine(dataRootDir, "config.json");
 
         return new RuntimePaths
         {
@@ -52,7 +57,7 @@ public sealed class RuntimePathService
             ? "installed"
             : "portable";
         var dataRootDir = runtimeMode == "installed"
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoInstaller")
+            ? ResolveInstalledDataRoot(config.InstalledDataRoot, bootstrapPaths.DataRootDir)
             : bootstrapPaths.DataRootDir;
         var resolved = new RuntimePaths
         {
@@ -66,7 +71,7 @@ public sealed class RuntimePathService
             CookiePath = ResolveAgainstRoot(config.Cookie, dataRootDir, "cookies.txt"),
             TmpDir = ResolveAgainstRoot(config.TmpDir, dataRootDir, "tmp"),
             DownloadDir = ResolveAgainstRoot(config.DownloadDir, dataRootDir, "downloads"),
-            LogsDir = Path.Combine(dataRootDir, "logs"),
+            LogsDir = ResolveAgainstRoot(config.LogsDir, dataRootDir, "logs"),
             ToolsDir = Path.Combine(bootstrapPaths.AppRootDir, "tools"),
             YtDlpPath = ResolveAgainstRoot(config.YtDlpPath, bootstrapPaths.AppRootDir, Path.Combine("tools", "yt-dlp.exe")),
             FfmpegPath = ResolveAgainstRoot(config.FfmpegPath, bootstrapPaths.AppRootDir, Path.Combine("tools", "ffmpeg.exe")),
@@ -74,6 +79,38 @@ public sealed class RuntimePathService
         };
 
         return resolved;
+    }
+
+    private string ResolveInstalledDataRoot(string? configuredValue, string bootstrapDataRoot)
+    {
+        if (string.IsNullOrWhiteSpace(configuredValue))
+        {
+            return Path.GetFullPath(bootstrapDataRoot);
+        }
+
+        return Path.GetFullPath(configuredValue);
+    }
+
+    private string ResolveBootstrapInstalledDataRoot(string appRootDir, string defaultRoot)
+    {
+        var markerPath = Path.Combine(appRootDir, InstalledDataRootMarkerFileName);
+
+        try
+        {
+            if (File.Exists(markerPath))
+            {
+                var markerValue = File.ReadAllText(markerPath).Trim();
+                if (!string.IsNullOrWhiteSpace(markerValue))
+                {
+                    return Path.GetFullPath(markerValue);
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return Path.GetFullPath(defaultRoot);
     }
 
     private static string ResolveAgainstRoot(string? path, string root, string fallback)

@@ -12,6 +12,8 @@ public sealed class CookieService
         string.Empty
     };
 
+    public static IReadOnlyList<string> CookieTemplate => Template;
+
     public void EnsureCookieFile(RuntimePaths paths)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(paths.CookiePath)!);
@@ -20,6 +22,12 @@ public sealed class CookieService
         {
             File.WriteAllLines(paths.CookiePath, Template);
         }
+    }
+
+    public void ResetToTemplate(RuntimePaths paths)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(paths.CookiePath)!);
+        File.WriteAllLines(paths.CookiePath, Template);
     }
 
     public (bool readable, string message) CheckReadable(RuntimePaths paths)

@@ -8,6 +8,9 @@ namespace VideoInstaller.Desktop.Services;
 
 public sealed class YtDlpService
 {
+    private static readonly string[] BrowserCookieCandidates = ["edge", "chrome", "firefox", "brave", "chromium"];
+    private const string CookieProbeUrl = "https://www.youtube.com/watch?v=BaW_jenozKc";
+
     private readonly ProcessRunner _processRunner;
     private readonly ProxyPolicyService _proxyPolicyService;
     private readonly FormatMapperService _formatMapperService;
@@ -23,6 +26,69 @@ public sealed class YtDlpService
         _proxyPolicyService = proxyPolicyService;
         _formatMapperService = formatMapperService;
         _logger = logger;
+    }
+
+    public async Task<BrowserCookieRefreshResult> RefreshCookiesFromBrowserAsync(AppConfig config, RuntimePaths paths, CancellationToken cancellationToken = default)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(paths.CookiePath)!);
+
+        byte[]? originalCookieBytes = null;
+        if (File.Exists(paths.CookiePath))
+        {
+            originalCookieBytes = await File.ReadAllBytesAsync(paths.CookiePath, cancellationToken);
+        }
+
+        var attempts = new List<string>();
+        foreach (var browser in BrowserCookieCandidates)
+        {
+            RestoreCookieFile(paths, originalCookieBytes);
+
+            var args = BuildBaseArgs(paths);
+            args.AddRange([
+                "--cookies-from-browser", browser,
+                "--cookies", paths.CookiePath,
+                "--no-warnings",
+                "--skip-download",
+                CookieProbeUrl
+            ]);
+
+            var proxy = _proxyPolicyService.GetProxyForWebsite("y2b", config);
+            var result = await RunParseAsync(
+                paths.YtDlpPath,
+                args,
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                proxy,
+                _proxyPolicyService.ShouldEnableProxyFallback("y2b", config),
+                config.TaskTimeout.Parse,
+                cancellationToken);
+
+            if (result.ExitCode == 0 && HasUsableCookie(paths.CookiePath))
+            {
+                _logger.LogInformation("Cookie refresh succeeded with browser {Browser} into {CookiePath}", browser, paths.CookiePath);
+                return new BrowserCookieRefreshResult
+                {
+                    Success = true,
+                    Browser = browser,
+                    Attempts = attempts,
+                    Message = $"已通过 {browser} 重新自动获取 Cookie，并更新到 {paths.CookiePath}。你现在可以直接重新解析或下载。"
+                };
+            }
+
+            var error = FormatCookieRefreshError(result.StandardError, result.StandardOutput);
+            attempts.Add($"{browser}: {error}");
+            _logger.LogWarning("Cookie refresh failed with browser {Browser}. Error={Error}", browser, error);
+        }
+
+        RestoreCookieFile(paths, originalCookieBytes);
+        return new BrowserCookieRefreshResult
+        {
+            Success = false,
+            Attempts = attempts,
+            Message = "未能从已安装浏览器重新自动获取 Cookie。已尝试："
+                + string.Join("；", attempts)
+                + $"。你仍可在设置页手动指定已导出的 Netscape Cookie 文件：{paths.CookiePath}"
+        };
     }
 
     public async Task<VideoParseResult> ParseAsync(ParsedVideoUrl target, AppConfig config, RuntimePaths paths, CancellationToken cancellationToken = default)
@@ -194,6 +260,37 @@ public sealed class YtDlpService
 
         messages.Add("原始错误：" + text);
         return string.Join(Environment.NewLine, messages);
+    }
+
+    private static string FormatCookieRefreshError(string stderr, string stdout)
+    {
+        var text = string.Join(Environment.NewLine, new[] { stderr, stdout }
+                .Where(value => !string.IsNullOrWhiteSpace(value)))
+            .Trim();
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "未返回可用错误信息";
+        }
+
+        var lines = text
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(3)
+            .ToArray();
+        return string.Join(" | ", lines);
+    }
+
+    private static void RestoreCookieFile(RuntimePaths paths, byte[]? originalCookieBytes)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(paths.CookiePath)!);
+
+        if (originalCookieBytes is { Length: > 0 })
+        {
+            File.WriteAllBytes(paths.CookiePath, originalCookieBytes);
+            return;
+        }
+
+        File.WriteAllLines(paths.CookiePath, CookieService.CookieTemplate);
     }
 
     private async Task<ProcessRunResult> RunParseAsync(string ytDlpPath, List<string> args, IReadOnlyList<string> cookieArgs, IReadOnlyList<string> siteArgs, string proxy, bool allowFallback, int timeout, CancellationToken cancellationToken)

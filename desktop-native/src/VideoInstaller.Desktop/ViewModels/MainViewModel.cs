@@ -79,6 +79,10 @@ public partial class MainViewModel : ObservableObject
     private bool isParsing;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RetryAutoAcquireCookieCommand))]
+    private bool isRefreshingCookie;
+
+    [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DownloadOriginalCommand))]
     [NotifyCanExecuteChangedFor(nameof(DownloadTranscodeCommand))]
     [NotifyCanExecuteChangedFor(nameof(DownloadSingleAudioCommand))]
@@ -193,11 +197,43 @@ public partial class MainViewModel : ObservableObject
 
     public bool HasMultipleParts => Parts.Count > 1;
 
+    private bool CanRetryAutoAcquireCookie()
+    {
+        return !IsRefreshingCookie;
+    }
+
     [RelayCommand]
     private void CopyGithub()
     {
         Clipboard.SetText(GithubText);
         SetStatus("success", "GitHub 链接已复制到剪贴板。", true);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRetryAutoAcquireCookie))]
+    private async Task RetryAutoAcquireCookieAsync()
+    {
+        if (IsRefreshingCookie)
+        {
+            SetStatus("info", "正在自动获取 Cookie，请稍候…", true);
+            return;
+        }
+
+        try
+        {
+            IsRefreshingCookie = true;
+            SetStatus("info", "正在尝试从已登录浏览器重新自动获取 Cookie…", true);
+            var result = await _ytDlpService.RefreshCookiesFromBrowserAsync(_config, _paths);
+            SetStatus(result.Success ? "success" : "error", result.Message, true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Automatic cookie refresh failed");
+            SetStatus("error", $"自动获取 Cookie 失败：{ex.Message}", true);
+        }
+        finally
+        {
+            IsRefreshingCookie = false;
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanSaveThumbnail))]

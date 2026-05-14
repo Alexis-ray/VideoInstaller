@@ -24,10 +24,12 @@ public sealed class RuntimePathServiceTests
     {
         var service = new RuntimePathService();
         var bootstrap = service.ResolveBootstrap();
+        var installedRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
 
         var result = service.ResolveForConfig(new VideoInstaller.Desktop.Models.AppConfig
         {
             RuntimeMode = "installed",
+            InstalledDataRoot = installedRoot,
             TmpDir = "downloads-temp",
             DownloadDir = "downloads-final",
             Cookie = "auth\\cookies.txt",
@@ -37,6 +39,7 @@ public sealed class RuntimePathServiceTests
         }, bootstrap);
 
         result.RuntimeMode.Should().Be("installed");
+        result.DataRootDir.Should().Be(Path.GetFullPath(installedRoot));
         result.TmpDir.Should().EndWith("downloads-temp");
         result.DownloadDir.Should().EndWith("downloads-final");
         result.CookiePath.Should().EndWith(Path.Combine("auth", "cookies.txt"));
@@ -60,10 +63,26 @@ public sealed class RuntimePathServiceTests
     }
 
     [Fact]
+    public void ResolveForConfig_ShouldUseDefaultInstalledDataRootWhenOverrideMissing()
+    {
+        var service = new RuntimePathService();
+        var bootstrap = service.ResolveBootstrap("installed");
+
+        var result = service.ResolveForConfig(new VideoInstaller.Desktop.Models.AppConfig
+        {
+            RuntimeMode = "installed",
+            InstalledDataRoot = string.Empty
+        }, bootstrap);
+
+        result.DataRootDir.Should().Be(Path.GetFullPath(service.GetDefaultInstalledDataRoot()));
+        result.ConfigPath.Should().Be(Path.Combine(result.DataRootDir, "config.json"));
+    }
+
+    [Fact]
     public void ResolveBootstrap_ShouldKeepPortableReleaseUnderRepositorySelfContained()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-        var appRoot = Path.Combine(root, "release", "VideoInstaller-v2.2.0-win-x64");
+        var appRoot = Path.Combine(root, "release", "VideoInstaller-v2.3.0-win-x64");
         Directory.CreateDirectory(Path.Combine(appRoot, "tools"));
 
         try

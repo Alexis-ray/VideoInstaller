@@ -30,14 +30,26 @@
 
             <TextBox MinHeight="44"
                       Padding="12,8"
-                     Background="#FFFFFF"
-                     BorderBrush="#D7DFEA"
+                      Background="#FFFFFF"
+                      BorderBrush="#D7DFEA"
                       FontSize="15"
                       Text="{Binding UrlInput, UpdateSourceTrigger=PropertyChanged}">
                 <TextBox.InputBindings>
                     <KeyBinding Key="Enter" Command="{Binding ParseCommand}" />
                 </TextBox.InputBindings>
             </TextBox>
+
+            <StackPanel Margin="0,12,0,0"
+                        Orientation="Horizontal">
+                <Button Padding="14,8"
+                        Command="{Binding RetryAutoAcquireCookieCommand}"
+                        Content="重新自动获取 Cookie" />
+                <TextBlock Margin="12,0,0,0"
+                           VerticalAlignment="Center"
+                           Foreground="#666666"
+                           Text="当系统提示 Cookie 获取失败时可重试；平时也可以主动刷新浏览器登录态。"
+                           TextWrapping="Wrap" />
+            </StackPanel>
 
             <Border Margin="0,14,0,0"
                     Padding="14,12"
@@ -135,15 +147,16 @@
                            FontSize="18"
                            FontWeight="Bold"
                            Text="可用音频" />
-                <DataGrid AutoGenerateColumns="False"
-                          CanUserAddRows="False"
-                          MaxHeight="260"
-                          SelectionMode="Single"
-                          SelectionUnit="FullRow"
-                          ScrollViewer.CanContentScroll="False"
-                          HeadersVisibility="Column"
-                          ItemsSource="{Binding Audios}"
-                          SelectedItem="{Binding SelectedAudio}">
+                 <DataGrid AutoGenerateColumns="False"
+                           CanUserAddRows="False"
+                           MaxHeight="260"
+                           SelectionMode="Single"
+                           SelectionUnit="FullRow"
+                           ScrollViewer.CanContentScroll="True"
+                           ScrollViewer.VerticalScrollBarVisibility="Auto"
+                           HeadersVisibility="Column"
+                           ItemsSource="{Binding Audios}"
+                           SelectedItem="{Binding SelectedAudio}">
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="当前选择" Width="72">
                             <DataGridTemplateColumn.CellTemplate>
@@ -176,15 +189,16 @@
                            FontSize="18"
                            FontWeight="Bold"
                            Text="可用视频" />
-                <DataGrid AutoGenerateColumns="False"
-                          CanUserAddRows="False"
-                          SelectionMode="Single"
-                          SelectionUnit="FullRow"
-                          ScrollViewer.CanContentScroll="False"
-                          ScrollViewer.VerticalScrollBarVisibility="Disabled"
-                          HeadersVisibility="Column"
-                          ItemsSource="{Binding Videos}"
-                          SelectedItem="{Binding SelectedVideo}">
+                 <DataGrid AutoGenerateColumns="False"
+                           CanUserAddRows="False"
+                           MaxHeight="260"
+                           SelectionMode="Single"
+                           SelectionUnit="FullRow"
+                           ScrollViewer.CanContentScroll="True"
+                           ScrollViewer.VerticalScrollBarVisibility="Auto"
+                           HeadersVisibility="Column"
+                           ItemsSource="{Binding Videos}"
+                           SelectedItem="{Binding SelectedVideo}">
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="当前选择" Width="72">
                             <DataGridTemplateColumn.CellTemplate>

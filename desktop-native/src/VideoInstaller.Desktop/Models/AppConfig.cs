@@ -4,9 +4,13 @@ public sealed class AppConfig
 {
     public string RuntimeMode { get; set; } = "portable";
 
+    public string InstalledDataRoot { get; set; } = string.Empty;
+
     public string TmpDir { get; set; } = "tmp";
 
     public string DownloadDir { get; set; } = "downloads";
+
+    public string LogsDir { get; set; } = "logs";
 
     public string Cookie { get; set; } = "cookies.txt";
 

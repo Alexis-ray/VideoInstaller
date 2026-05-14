@@ -23,19 +23,59 @@ public partial class MainView : UserControl
         if (e.OriginalSource is DependencyObject source)
         {
             var innerScrollViewer = FindAncestor<ScrollViewer>(source);
-            if (innerScrollViewer is not null && !ReferenceEquals(innerScrollViewer, scrollViewer) && innerScrollViewer.ScrollableHeight > 0)
+            if (innerScrollViewer is not null
+                && !ReferenceEquals(innerScrollViewer, scrollViewer)
+                && innerScrollViewer.ScrollableHeight > 0
+                && CanScrollInDirection(innerScrollViewer, e.Delta))
             {
                 return;
             }
 
-            if (FindAncestor<DataGrid>(source) is not null)
+            var dataGrid = FindAncestor<DataGrid>(source);
+            if (dataGrid is not null)
             {
-                return;
+                var dataGridScrollViewer = FindDescendantScrollViewer(dataGrid);
+                if (dataGridScrollViewer is not null && dataGridScrollViewer.ScrollableHeight > 0 && CanScrollInDirection(dataGridScrollViewer, e.Delta))
+                {
+                    return;
+                }
             }
         }
 
         e.Handled = true;
         scrollViewer.ScrollToVerticalOffset(scrollViewer.VerticalOffset - e.Delta);
+    }
+
+    private static bool CanScrollInDirection(ScrollViewer scrollViewer, int delta)
+    {
+        if (scrollViewer.ScrollableHeight <= 0)
+        {
+            return false;
+        }
+
+        return delta > 0
+            ? scrollViewer.VerticalOffset > 0
+            : scrollViewer.VerticalOffset < scrollViewer.ScrollableHeight;
+    }
+
+    private static ScrollViewer? FindDescendantScrollViewer(DependencyObject current)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(current); index++)
+        {
+            var child = VisualTreeHelper.GetChild(current, index);
+            if (child is ScrollViewer scrollViewer)
+            {
+                return scrollViewer;
+            }
+
+            var nested = FindDescendantScrollViewer(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     private static T? FindAncestor<T>(DependencyObject? current)

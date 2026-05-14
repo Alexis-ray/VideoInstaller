@@ -15,8 +15,10 @@ public sealed class ConfigServiceTests
         var config = service.CreateDefault("portable");
 
         config.RuntimeMode.Should().Be("portable");
+        config.InstalledDataRoot.Should().BeEmpty();
         config.TmpDir.Should().Be("tmp");
         config.DownloadDir.Should().Be("downloads");
+        config.LogsDir.Should().Be("logs");
         config.Cookie.Should().Be("cookies.txt");
         config.Proxy.Should().Be("http://127.0.0.1:7890");
         config.ProxyFallbackDirect.Should().BeTrue();
@@ -26,6 +28,20 @@ public sealed class ConfigServiceTests
         config.TaskTimeout.Parse.Should().Be(60000);
         config.TaskTimeout.Download.Should().Be(3600000);
         config.DiskCleanupThreshold.Should().Be(90);
+    }
+
+    [Fact]
+    public void CreateDefault_ShouldReturnInstalledDefaults()
+    {
+        var service = new ConfigService();
+
+        var config = service.CreateDefault("installed");
+
+        config.RuntimeMode.Should().Be("installed");
+        config.InstalledDataRoot.Should().Contain(Path.Combine("AppData", "Local", "VideoInstaller"));
+        config.DownloadDir.Should().Be("downloads");
+        config.LogsDir.Should().Be("logs");
+        config.Cookie.Should().Be("cookies.txt");
     }
 
     [Fact]
@@ -103,6 +119,8 @@ public sealed class ConfigServiceTests
 
             config.TmpDir.Should().Be("tmp");
             config.DownloadDir.Should().Be("downloads");
+            config.InstalledDataRoot.Should().BeEmpty();
+            config.LogsDir.Should().Be("logs");
             config.YtDlpPath.Should().Be("tools/yt-dlp.exe");
             config.JsRuntimePath.Should().Be("tools/js-runtime/deno.exe");
         }

@@ -6,13 +6,17 @@ namespace VideoInstaller.Desktop.Services;
 
 public sealed class ConfigService
 {
+    private static string DefaultInstalledDataRoot => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "VideoInstaller");
+
     public AppConfig LoadOrCreate(RuntimePaths paths)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(paths.ConfigPath)!);
 
         if (!File.Exists(paths.ConfigPath))
         {
-            var config = CreateDefault(paths.RuntimeMode);
+            var config = CreateDefault(paths.RuntimeMode, paths.DataRootDir);
             File.WriteAllText(paths.ConfigPath, JsonHelpers.Serialize(config));
             return config;
         }
@@ -21,7 +25,7 @@ public sealed class ConfigService
         {
             var json = File.ReadAllText(paths.ConfigPath);
             var config = JsonHelpers.Deserialize<AppConfig>(json);
-            return Normalize(config, paths.RuntimeMode);
+            return Normalize(config, paths);
         }
         catch (Exception)
         {
@@ -29,40 +33,41 @@ public sealed class ConfigService
                 Path.GetDirectoryName(paths.ConfigPath)!,
                 $"config.invalid.{DateTime.Now:yyyyMMddHHmmss}.json");
             File.Copy(paths.ConfigPath, backupPath, overwrite: true);
-            var config = CreateDefault(paths.RuntimeMode);
+            var config = CreateDefault(paths.RuntimeMode, paths.DataRootDir);
             File.WriteAllText(paths.ConfigPath, JsonHelpers.Serialize(config));
             return config;
         }
     }
 
-    public AppConfig CreateDefault(string runtimeMode)
+    public AppConfig CreateDefault(string runtimeMode, string? installedDataRoot = null)
     {
         return new AppConfig
         {
             RuntimeMode = runtimeMode,
-            DownloadDir = runtimeMode == "installed"
-                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoInstaller", "downloads")
-                : "downloads"
+            InstalledDataRoot = runtimeMode == "installed" ? (installedDataRoot ?? DefaultInstalledDataRoot) : string.Empty,
+            DownloadDir = "downloads"
         };
     }
 
     public void Save(RuntimePaths paths, AppConfig config)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(paths.ConfigPath)!);
-        File.WriteAllText(paths.ConfigPath, JsonHelpers.Serialize(Normalize(config, paths.RuntimeMode)));
+        File.WriteAllText(paths.ConfigPath, JsonHelpers.Serialize(Normalize(config, paths)));
     }
 
-    private AppConfig Normalize(AppConfig? config, string runtimeMode)
+    private AppConfig Normalize(AppConfig? config, RuntimePaths paths)
     {
-        var defaults = CreateDefault(runtimeMode);
+        var defaults = CreateDefault(paths.RuntimeMode, paths.RuntimeMode == "installed" ? paths.DataRootDir : null);
         if (config is null)
         {
             return defaults;
         }
 
         config.RuntimeMode = string.IsNullOrWhiteSpace(config.RuntimeMode) ? defaults.RuntimeMode : config.RuntimeMode;
+        config.InstalledDataRoot = string.IsNullOrWhiteSpace(config.InstalledDataRoot) ? defaults.InstalledDataRoot : config.InstalledDataRoot.Trim();
         config.TmpDir = string.IsNullOrWhiteSpace(config.TmpDir) ? defaults.TmpDir : config.TmpDir;
         config.DownloadDir = string.IsNullOrWhiteSpace(config.DownloadDir) ? defaults.DownloadDir : config.DownloadDir;
+        config.LogsDir = string.IsNullOrWhiteSpace(config.LogsDir) ? defaults.LogsDir : config.LogsDir;
         config.Cookie = string.IsNullOrWhiteSpace(config.Cookie) ? defaults.Cookie : config.Cookie;
         config.Proxy = config.Proxy is null ? defaults.Proxy : config.Proxy.Trim();
         config.YtDlpPath = string.IsNullOrWhiteSpace(config.YtDlpPath) ? defaults.YtDlpPath : config.YtDlpPath;

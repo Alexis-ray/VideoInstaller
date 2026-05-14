@@ -13,5 +13,10 @@
     "version": "2.7.14",
     "url": "https://github.com/denoland/deno/releases/latest",
     "output": "release-tools/js-runtime/deno.exe"
+  },
+  "rcedit": {
+    "version": "2.0.0",
+    "url": "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe",
+    "output": "release-tools/rcedit-x64.exe"
   }
 }

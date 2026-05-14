@@ -5,13 +5,13 @@
   #define MyAppExeName "VideoInstaller.exe"
 #endif
 #ifndef MyAppVersion
-  #define MyAppVersion "2.2.0"
+  #define MyAppVersion "2.3.0"
 #endif
 #ifndef MyPortableRootName
-  #define MyPortableRootName "VideoInstaller-v2.2.0-win-x64"
+  #define MyPortableRootName "VideoInstaller-v2.3.0-win-x64"
 #endif
 #ifndef MyOutputBaseFilename
-  #define MyOutputBaseFilename "VideoInstaller-v2.2.0-win-x64-setup"
+  #define MyOutputBaseFilename "VideoInstaller-v2.3.0-win-x64-setup"
 #endif
 #define MySourceRoot AddBackslash(SourcePath) + ".."
 #define MyPortableRoot AddBackslash(MySourceRoot) + "release\" + MyPortableRootName
@@ -40,12 +40,6 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 Source: "{#MyPortableRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-[Dirs]
-Name: "{localappdata}\VideoInstaller"
-Name: "{localappdata}\VideoInstaller\tmp"
-Name: "{localappdata}\VideoInstaller\downloads"
-Name: "{localappdata}\VideoInstaller\logs"
-
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--installed"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
@@ -56,8 +50,14 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "--installed"; Description: "启�
 
 [Code]
 var
+  DataRootPage: TInputDirWizardPage;
   DownloadDirPage: TInputDirWizardPage;
   ProxyPage: TInputQueryWizardPage;
+
+function GetDataRootMarkerPath: string;
+begin
+  Result := AddBackslash(ExpandConstant('{app}')) + 'data-root.txt';
+end;
 
 function GetInstalledDataRoot: string;
 begin
@@ -184,11 +184,21 @@ end;
 
 procedure InitializeWizard;
 begin
-  DownloadDirPage := CreateInputDirPage(
+  DataRootPage := CreateInputDirPage(
     wpSelectDir,
+    '数据目录设置',
+    '请选择安装模式数据目录',
+    '安装版程序文件会进入 Program Files，但配置、Cookie、日志、临时文件和默认下载目录建议保存在当前用户可写的位置。默认值为 %LOCALAPPDATA%\VideoInstaller。',
+    False,
+    '');
+  DataRootPage.Add('数据目录:');
+  DataRootPage.Values[0] := GetInstalledDataRoot;
+
+  DownloadDirPage := CreateInputDirPage(
+    DataRootPage.ID,
     '下载目录设置',
     '请选择下载成品保存目录',
-    'Native 安装版默认把程序安装到 Program Files，而下载成品建议保存在当前用户可写目录。默认值为 %LOCALAPPDATA%\VideoInstaller\downloads。',
+    '下载成品建议保存在当前用户可写目录。默认值会跟随上一步选择的数据目录。',
     False,
     '');
   DownloadDirPage.Add('下载目录:');
@@ -208,6 +218,19 @@ var
   ErrorMessage: string;
 begin
   Result := True;
+
+  if CurPageID = DataRootPage.ID then
+  begin
+    if not ValidateWriteableDirectory(DataRootPage.Values[0], ErrorMessage) then
+    begin
+      MsgBox(ErrorMessage, mbError, MB_OK);
+      Result := False;
+      exit;
+    end;
+
+    DataRootPage.Values[0] := ExpandFileName(NormalizePath(DataRootPage.Values[0]));
+    DownloadDirPage.Values[0] := AddBackslash(DataRootPage.Values[0]) + 'downloads';
+  end;
 
   if CurPageID = DownloadDirPage.ID then
   begin
@@ -244,15 +267,21 @@ begin
 
   ConfigPath := GetConfigPath;
   CookiePath := GetCookiePath;
+  ConfigPath := AddBackslash(ExpandFileName(NormalizePath(DataRootPage.Values[0]))) + 'config.json';
+  CookiePath := AddBackslash(ExpandFileName(NormalizePath(DataRootPage.Values[0]))) + 'cookies.txt';
   DownloadDir := ExpandFileName(NormalizePath(DownloadDirPage.Values[0]));
   ProxyValue := Trim(ProxyPage.Values[0]);
+
+  SaveStringToFile(GetDataRootMarkerPath, ExpandFileName(NormalizePath(DataRootPage.Values[0])), False);
 
   if not FileExists(ConfigPath) then
   begin
     ConfigText := '{'#13#10 +
       '  "runtimeMode": "installed",'#13#10 +
+      '  "installedDataRoot": "' + EscapeJson(ExpandFileName(NormalizePath(DataRootPage.Values[0]))) + '",'#13#10 +
       '  "tmpDir": "tmp",'#13#10 +
       '  "downloadDir": "' + EscapeJson(DownloadDir) + '",'#13#10 +
+      '  "logsDir": "logs",'#13#10 +
       '  "cookie": "cookies.txt",'#13#10 +
       '  "proxy": "' + EscapeJson(ProxyValue) + '",'#13#10 +
       '  "proxyFallbackDirect": true,'#13#10 +

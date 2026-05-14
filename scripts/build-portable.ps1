@@ -5,17 +5,37 @@ $packageJsonPath = Join-Path $workspaceRoot 'package.json'
 $packageJson = Get-Content -LiteralPath $packageJsonPath -Raw | ConvertFrom-Json
 $version = $packageJson.version
 $portableName = "VideoInstaller-legacy-v$version-win-x64"
+$syncIconsScript = Join-Path $PSScriptRoot 'sync-icons.ps1'
+$setExeIconScript = Join-Path $PSScriptRoot 'set-exe-icon.ps1'
+
+if (-not (Test-Path -LiteralPath $syncIconsScript)) {
+    throw "Missing icon sync script: $syncIconsScript"
+}
+
+& $syncIconsScript
+if (-not $?) {
+    throw 'Icon sync failed'
+}
 
 $releaseRoot = Join-Path $workspaceRoot 'release'
 $buildRoot = Join-Path $workspaceRoot 'release-build'
 $portableRoot = Join-Path $releaseRoot $portableName
+$zipPath = Join-Path $releaseRoot "$portableName.zip"
 $toolsSourceRoot = Join-Path $workspaceRoot 'release-tools'
 $toolsTargetRoot = Join-Path $portableRoot 'tools'
 $exeOutput = Join-Path $buildRoot 'VideoInstaller.exe'
 $pkgFetchLogPath = Join-Path $workspaceRoot 'node_modules\pkg-fetch\lib-es5\log.js'
+$iconPath = Join-Path $workspaceRoot 'assets\icons\app.ico'
+$rceditPath = Join-Path $toolsSourceRoot 'rcedit-x64.exe'
 
 if (-not (Test-Path -LiteralPath $toolsSourceRoot)) {
     throw 'Missing release-tools directory. Run npm run release:tools first.'
+}
+
+foreach ($requiredPath in @($setExeIconScript, $iconPath, $rceditPath)) {
+    if (-not (Test-Path -LiteralPath $requiredPath)) {
+        throw "Missing required path: $requiredPath. Run npm run release:tools first if this is a release tool."
+    }
 }
 
 foreach ($requiredTool in @('yt-dlp.exe', 'ffmpeg.exe')) {
@@ -30,6 +50,10 @@ if (Test-Path -LiteralPath $buildRoot) {
 
 if (Test-Path -LiteralPath $portableRoot) {
     Remove-Item -LiteralPath $portableRoot -Recurse -Force
+}
+
+if (Test-Path -LiteralPath $zipPath) {
+    Remove-Item -LiteralPath $zipPath -Force
 }
 
 New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
@@ -51,6 +75,11 @@ $env:CI = '1'
 npx pkg . --targets node18-win-x64 --output $exeOutput
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exeOutput)) {
     throw 'pkg failed to build VideoInstaller.exe'
+}
+
+& $setExeIconScript -ExePath $exeOutput -IconPath $iconPath -RcEditPath $rceditPath
+if (-not $?) {
+    throw 'Failed to apply icon to legacy executable'
 }
 
 Copy-Item -LiteralPath $exeOutput -Destination (Join-Path $portableRoot 'VideoInstaller.exe') -Force
@@ -93,7 +122,11 @@ $manifest = @{
     runtimeMode = 'portable'
     entry = 'VideoInstaller.exe'
     generatedAt = (Get-Date).ToString('s')
+    iconSource = 'assets/icons/app.ico'
 } | ConvertTo-Json -Depth 3
 Set-Content -LiteralPath (Join-Path $portableRoot 'release-manifest.json') -Value $manifest -Encoding UTF8
 
+Compress-Archive -LiteralPath $portableRoot -DestinationPath $zipPath -CompressionLevel Optimal
+
 "Portable release built: $(Join-Path $portableRoot 'VideoInstaller.exe')"
+"Portable zip built: $zipPath"

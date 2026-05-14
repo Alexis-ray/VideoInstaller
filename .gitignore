@@ -10,10 +10,7 @@ yarn-error.log*
 !.env.example
 
 AI_CONTEXT.md
-WORKSPACE_HANDOFF.local.md
-RELEASE_EXE_GUIDE.local.md
-RELEASE_READINESS_CHECKLIST.local.md
-NEXT_RELEASE_IMPLEMENTATION_PLAN.local.md
+Todolist.md
 .sisyphus/
 
 release/

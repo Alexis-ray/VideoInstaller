@@ -1,11 +1,12 @@
 {
   "name": "@develon/youtube-dl-rest",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "bin": "index.js",
   "description": "Windows YouTube and Bilibili video downloader",
   "scripts": {
     "check": "node --check index.js",
     "health": "node -e \"fetch('http://127.0.0.1:2878/y2b/health').then(r=>r.text()).then(t=>console.log(t)).catch(e=>{console.error(e.message);process.exit(1);})\"",
+    "release:clean": "powershell -ExecutionPolicy Bypass -File scripts/clean-release.ps1",
     "release:tools": "powershell -ExecutionPolicy Bypass -File scripts/download-release-tools.ps1",
     "release:legacy:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "release:legacy:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",

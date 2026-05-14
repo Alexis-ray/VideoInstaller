@@ -32,6 +32,8 @@ function Save-UrlWithRetry {
 
 $ytDlpUrl = 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.17/yt-dlp.exe'
 $ytDlpPath = Join-Path $toolsDir 'yt-dlp.exe'
+$rceditUrl = 'https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe'
+$rceditPath = Join-Path $toolsDir 'rcedit-x64.exe'
 
 $ffmpegVersion = '8.1.1'
 $ffmpegArchiveUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
@@ -47,6 +49,7 @@ $denoArchivePath = Join-Path $downloadsDir 'deno-x86_64-pc-windows-msvc.zip'
 $denoExtractDir = Join-Path $downloadsDir 'deno-extract'
 
 Save-UrlWithRetry -Uri $ytDlpUrl -OutFile $ytDlpPath
+Save-UrlWithRetry -Uri $rceditUrl -OutFile $rceditPath
 Save-UrlWithRetry -Uri $ffmpegArchiveUrl -OutFile $ffmpegArchivePath
 Save-UrlWithRetry -Uri $denoArchiveUrl -OutFile $denoArchivePath
 
@@ -92,8 +95,13 @@ $manifest = @{
         url = $denoArchiveUrl
         output = 'release-tools/js-runtime/deno.exe'
     }
+    rcedit = @{
+        version = '2.0.0'
+        url = $rceditUrl
+        output = 'release-tools/rcedit-x64.exe'
+    }
 } | ConvertTo-Json -Depth 4
 
 Set-Content -LiteralPath (Join-Path $toolsDir 'manifest.json') -Value $manifest -Encoding UTF8
 
-"Updated release-tools: yt-dlp.exe, ffmpeg.exe, js-runtime\deno.exe"
+"Updated release-tools: yt-dlp.exe, ffmpeg.exe, js-runtime\deno.exe, rcedit-x64.exe"

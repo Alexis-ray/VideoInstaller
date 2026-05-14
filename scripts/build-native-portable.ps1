@@ -5,6 +5,8 @@ $solutionPath = Join-Path $workspaceRoot 'desktop-native\VideoInstaller.Desktop.
 $projectPath = Join-Path $workspaceRoot 'desktop-native\src\VideoInstaller.Desktop\VideoInstaller.Desktop.csproj'
 $packageJsonPath = Join-Path $workspaceRoot 'package.json'
 $toolsSourceRoot = Join-Path $workspaceRoot 'release-tools'
+$syncIconsScript = Join-Path $PSScriptRoot 'sync-icons.ps1'
+$setExeIconScript = Join-Path $PSScriptRoot 'set-exe-icon.ps1'
 $releaseRoot = Join-Path $workspaceRoot 'release'
 $stagingRoot = Join-Path $workspaceRoot 'release-build\native-portable'
 $packageJson = Get-Content -LiteralPath $packageJsonPath -Raw | ConvertFrom-Json
@@ -13,11 +15,28 @@ $portableName = "VideoInstaller-v$appVersion-win-x64"
 $portableRoot = Join-Path $releaseRoot $portableName
 $publishRoot = Join-Path $stagingRoot 'publish'
 $zipPath = Join-Path $releaseRoot "$portableName.zip"
+$iconPath = Join-Path $workspaceRoot 'assets\icons\app.ico'
+$rceditPath = Join-Path $toolsSourceRoot 'rcedit-x64.exe'
 
 foreach ($requiredPath in @($solutionPath, $projectPath, $toolsSourceRoot)) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
         throw "Missing required path: $requiredPath"
     }
+}
+
+if (-not (Test-Path -LiteralPath $syncIconsScript)) {
+    throw "Missing icon sync script: $syncIconsScript"
+}
+
+foreach ($requiredPath in @($setExeIconScript, $iconPath, $rceditPath)) {
+    if (-not (Test-Path -LiteralPath $requiredPath)) {
+        throw "Missing required path: $requiredPath. Run npm run release:tools first if this is a release tool."
+    }
+}
+
+& $syncIconsScript
+if (-not $?) {
+    throw 'Icon sync failed'
 }
 
 foreach ($requiredTool in @('yt-dlp.exe', 'ffmpeg.exe', 'js-runtime\deno.exe')) {
@@ -58,6 +77,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Copy-Item -LiteralPath $publishRoot -Destination $portableRoot -Recurse -Force
+
+$nativeExePath = Join-Path $portableRoot 'VideoInstaller.exe'
+& $setExeIconScript -ExePath $nativeExePath -IconPath $iconPath -RcEditPath $rceditPath
+if (-not $?) {
+    throw 'Failed to apply icon to native executable'
+}
+
 New-Item -ItemType Directory -Path (Join-Path $portableRoot 'tools') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $portableRoot 'tools\js-runtime') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $portableRoot 'tmp') -Force | Out-Null
@@ -100,9 +126,11 @@ $releaseNotes = @(
     'Primary release line for VideoInstaller on Windows.',
     'No browser UI, no Node.js runtime, no WebView.',
     'Bundled tools: yt-dlp, ffmpeg, and Deno JavaScript runtime for YouTube extraction.',
+    'Desktop exe icon, installer icon, and legacy favicon all inherit the tracked source icon from assets\\icons\\app.ico.',
     'Portable mode writes config, cookies, logs, tmp, and downloads into the release folder itself.',
-    'Installed mode writes config, cookies, tmp, logs, and downloads into %LOCALAPPDATA%\VideoInstaller.',
-    'Legacy Web assets remain available separately as compatibility builds.',
+    'Installed mode keeps program files in the install directory and writes config, cookies, tmp, logs, and default downloads into the user-selected data directory.',
+    'Legacy compatibility assets are not part of the official v2.3.0 upload because that line currently has a terminal flash-exit issue.',
+    'Automatic cookie acquisition is best-effort. If it fails, manually import a Netscape-format browser cookie file.',
     'Do not run executables from release-build/ as if they were the native desktop final release.'
 )
 Set-Content -LiteralPath (Join-Path $portableRoot 'release-notes.txt') -Value $releaseNotes -Encoding UTF8
