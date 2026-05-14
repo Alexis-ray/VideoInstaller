@@ -1,88 +1,36 @@
-# VideoInstaller v2.3.0 发布验收清单
+# VideoInstaller v2.3.0 使用前检查建议
 
-本文档只记录 `v2.3.0` 发布前仍需要实际验收的项目。
+本文档用于帮助普通用户在开始使用 `v2.3.0` 前快速确认版本、下载包和关键功能是否符合预期。
 
-## 1. 图标与发布物验收
+## 1. 下载包检查
 
-构建前先确认以下文件已经由同一个主图标源生成：
+请确认你拿到的是以下任一正式版本：
 
-- 主图标源：`assets/icons/app.ico`
-- 桌面程序图标：`desktop-native/src/VideoInstaller.Desktop/Assets/app.ico`
-- legacy favicon：`static/favicon.ico`
+- `VideoInstaller-v2.3.0-win-x64.zip`
+- `VideoInstaller-v2.3.0-win-x64-setup.exe`
 
-建议先执行：
+`legacy v2.3.0` 当前不提供下载。
 
-```powershell
-npm run release:clean
-```
+## 2. 首次启动建议
 
-建议执行：
+1. 首次启动后先解析一个公开视频，确认程序可以正常打开并完成基础解析。
+2. 如果你使用安装版，建议确认默认下载目录是否符合自己的使用习惯。
+3. 如果你依赖代理访问外网，建议在正式下载前先完成代理设置并测试一次解析。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/build-native-portable.ps1
-powershell -ExecutionPolicy Bypass -File scripts/build-native-installer.ps1
-```
+## 3. Cookie 相关检查
 
-必须人工确认：
+1. 如果目标内容需要登录态，请优先确认自己是否已经登录对应网站。
+2. 自动获取 Cookie 功能目前不保证每次都成功，失败时建议手动导入浏览器导出的 Netscape 格式 Cookie。
+3. 重新导入 Cookie 后，建议再次执行解析，确认登录验证或地区限制是否已解除。
 
-1. `release/VideoInstaller-v2.3.0-win-x64/VideoInstaller.exe` 在资源管理器中显示的新图标正确。
-2. `release/VideoInstaller-v2.3.0-win-x64-setup.exe` 安装器图标与桌面程序图标一致。
-3. 安装后桌面快捷方式图标与开始菜单图标一致。
-4. `static/favicon.ico` 与桌面程序图标保持同一视觉方案。
+## 4. 下载体验检查
 
-## 2. 旧发布物清理边界
+1. 音频与视频格式列表应能正常滚动与选择。
+2. 下载完成后应能正常打开输出目录或保存封面。
+3. 如果你选择转码模式，下载时间会更长，这是正常现象。
 
-发布前应只保留当前需要上传或复核的产物，避免旧版本干扰判断：
+## 5. 已知事项
 
-- `release/`：仅保留当前版本需要验收或上传的目录、zip、setup
-- `release-build/`：仅保留构建过程仍需要的中间输出；验收完成后建议清空
-
-最低要求：
-
-1. 旧版 `v2.1.0`、`v2.2.0` 或旧 legacy 产物不要与当前版本混放后再拿去人工验收。
-2. 不要把 `release-build/VideoInstaller.exe` 当成正式发布入口。
-3. `legacy v2.3.0` 当前不作为正式上传资产保留。
-
-## 3. 关键行为闭环验收
-
-### 桌面版结果页滚轮
-
-1. 音频列表悬停时滚轮可用。
-2. 视频列表悬停时滚轮可用。
-3. 内层滚动到边界后，外层页面能自然接管滚动。
-4. 没有滚动穿透、闪跳或焦点错乱。
-
-### 设置页路径编辑
-
-1. 安装模式数据目录、临时目录、下载目录、日志目录、Cookie 路径、工具路径都能保存。
-2. 保存后新任务立即使用新配置。
-3. 重启应用后设置能够正确回读。
-4. 错误路径、不可写路径、不可访问路径提示清晰。
-
-### 安装模式数据目录策略
-
-1. 安装向导写入的数据目录能被首次启动正确读取。
-2. 配置、Cookie、日志、临时文件和默认下载目录确实落到选定数据目录。
-3. 安装目录位于 `Program Files` 时，普通用户权限下仍能正常使用。
-
-## 4. 文档与 GitHub 展示复核
-
-发布前复核这些文件的版本号、路径策略和 legacy 定位是否一致：
-
-- `README.md`
-- `CHANGELOG.md`
-- `desktop-native/README.md`
-- `docs/release-workflow.md`
-- `docs/release-notes-v2.3.0.md`
-- `package.json`
-- `desktop-native/src/VideoInstaller.Desktop/VideoInstaller.Desktop.csproj`
-- `scripts/installer-native.iss`
-- `scripts/installer.iss`
-- `static/index.html`
-
-重点检查：
-
-1. 当前对外版本统一为 `v2.3.0`。
-2. README、发布说明与更新日志已经明确：自动获取 Cookie 目前不保证每次都成功，必要时应手动导入。
-3. README、发布说明与发布流程已经明确：`legacy v2.3.0` 暂不提供下载，原因是当前存在启动终端后闪退问题。
-4. README 中关于 `release/`、`release-build/`、`release-tools/` 的说明与 `.gitignore` 一致，不把未入库目录当作仓库可见内容来描述。
+- `v2.3.0` 当前推荐使用原生桌面版。
+- 自动获取 Cookie 目前属于 best-effort 能力，不保证每次都成功。
+- `legacy v2.3.0` 暂不提供下载，后续会在问题修复后再单独发布。

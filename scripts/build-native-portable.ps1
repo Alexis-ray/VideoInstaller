@@ -126,12 +126,12 @@ $releaseNotes = @(
     'Primary release line for VideoInstaller on Windows.',
     'No browser UI, no Node.js runtime, no WebView.',
     'Bundled tools: yt-dlp, ffmpeg, and Deno JavaScript runtime for YouTube extraction.',
-    'Desktop exe icon, installer icon, and legacy favicon all inherit the tracked source icon from assets\\icons\\app.ico.',
-    'Portable mode writes config, cookies, logs, tmp, and downloads into the release folder itself.',
-    'Installed mode keeps program files in the install directory and writes config, cookies, tmp, logs, and default downloads into the user-selected data directory.',
+    'Desktop and installer icons are unified for the official v2.3.0 release.',
+    'Portable mode is suitable for users who want to unzip and run directly.',
+    'Installed mode is suitable for users who want a longer-term Windows app experience.',
     'Legacy compatibility assets are not part of the official v2.3.0 upload because that line currently has a terminal flash-exit issue.',
     'Automatic cookie acquisition is best-effort. If it fails, manually import a Netscape-format browser cookie file.',
-    'Do not run executables from release-build/ as if they were the native desktop final release.'
+    'If a site requires a stable login state, manual cookie import remains the most reliable option.'
 )
 Set-Content -LiteralPath (Join-Path $portableRoot 'release-notes.txt') -Value $releaseNotes -Encoding UTF8
 
