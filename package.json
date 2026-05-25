@@ -1,47 +1,12 @@
 {
-  "name": "@develon/youtube-dl-rest",
-  "version": "2.3.0",
-  "bin": "index.js",
-  "description": "Windows YouTube and Bilibili video downloader",
+  "name": "videoinstaller",
+  "description": "Browser-based local video downloader",
   "scripts": {
-    "check": "node --check index.js",
-    "health": "node -e \"fetch('http://127.0.0.1:2878/y2b/health').then(r=>r.text()).then(t=>console.log(t)).catch(e=>{console.error(e.message);process.exit(1);})\"",
-    "release:clean": "powershell -ExecutionPolicy Bypass -File scripts/clean-release.ps1",
-    "release:tools": "powershell -ExecutionPolicy Bypass -File scripts/download-release-tools.ps1",
-    "release:legacy:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
-    "release:legacy:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
-    "release:legacy": "npm run release:legacy:portable && npm run release:legacy:installer",
-    "release:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
-    "release:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
-    "release:native:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-native-portable.ps1",
-    "release:native:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-native-installer.ps1",
-    "release:native": "npm run release:native:portable && npm run release:native:installer",
-    "start:dev": "nodemon index.js",
-    "start": "node index.js"
+    "postinstall": "node src/install-tools.js",
+    "start": "node src/index.js"
   },
-  "license": "MIT",
   "dependencies": {
     "express": "^4.22.1",
-    "node-disk-info": "^1.3.0"
-  },
-  "devDependencies": {
-    "pkg": "^5.8.1"
-  },
-  "pkg": {
-    "targets": [
-      "node18-win-x64"
-    ],
-    "outputPath": "release-build",
-    "assets": [
-      "package.json"
-    ]
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "homepage": "https://github.com/Alexis-ray/VideoInstaller",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Alexis-ray/VideoInstaller.git"
+    "ffmpeg-static": "^5.2.0"
   }
 }

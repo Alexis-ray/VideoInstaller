@@ -1,362 +1,486 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VideoInstaller v2.3.0 | Windows 浏览器兼容版</title>
+    <title>VideoInstaller</title>
     <link rel="icon" href="./favicon.ico" sizes="any">
-    <link rel="stylesheet" href="./css/style.css">
     <style>
         :root {
-            --primary: #4CAF50;
-            --secondary: #2196F3;
-            --light-bg: #f5f5f5;
-            --border: #ddd;
+            color-scheme: light;
+            --bg: #f4f6f8;
+            --panel: #ffffff;
+            --border: #d8dde3;
+            --text: #1f2328;
+            --muted: #667085;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --error: #dc2626;
+            --success: #059669;
         }
 
+        * { box-sizing: border-box; }
         body {
+            margin: 0;
+            padding: 24px;
             font-family: "Microsoft YaHei", sans-serif;
-            max-width: 1200px;
+            color: var(--text);
+            background: var(--bg);
+        }
+
+        .app {
+            max-width: 1100px;
             margin: 0 auto;
-            padding: 20px;
-            background-color: var(--light-bg);
         }
 
-        .title {
-            text-align: center;
-            margin: 30px 0;
-            font-size: 2rem;
-            color: #333;
+        h1 { margin: 0 0 20px; font-size: 28px; }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 18px;
+        }
+
+        .row {
             display: flex;
-            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
             align-items: center;
-            gap: 20px;
         }
 
-        .github {
-            margin-left: auto;
+        input[type="url"], select {
+            flex: 1 1 520px;
+            min-height: 42px;
+            padding: 0 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 15px;
         }
 
-        #divURL {
-            text-align: center;
-            margin: 40px 0;
+        button {
+            min-height: 42px;
+            padding: 0 16px;
+            border: 0;
+            border-radius: 8px;
+            background: var(--primary);
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
         }
 
-        .search {
-            width: 80%;
-            padding: 12px 20px;
-            font-size: 1rem;
-            border: 2px solid var(--border);
-            border-radius: 4px;
-            transition: border 0.3s;
+        button:hover { background: var(--primary-hover); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .status {
+            display: none;
+            margin-top: 14px;
+            padding: 12px 14px;
+            border-radius: 8px;
+            line-height: 1.6;
+            word-break: break-word;
         }
 
-        .search:focus {
-            border-color: var(--secondary);
-            outline: none;
+        .status.info { display: block; background: #eff6ff; color: #1d4ed8; }
+        .status.success { display: block; background: #ecfdf3; color: var(--success); }
+        .status.error { display: block; background: #fef2f2; color: var(--error); }
+
+        .result-header {
+            display: flex;
+            gap: 18px;
+            align-items: flex-start;
+            flex-wrap: wrap;
         }
 
-        .available {
-            margin: 30px 0 15px;
-            color: #333;
-            font-size: 1.2rem;
-            font-weight: bold;
-            padding-bottom: 8px;
-            border-bottom: 2px solid var(--primary);
+        .thumbnail {
+            width: 240px;
+            max-width: 100%;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: #e5e7eb;
+        }
+
+        .section-title {
+            margin: 0 0 12px;
+            font-size: 18px;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            margin: 10px 0 30px;
-            background: white;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
 
-        th,
-        td {
-            padding: 12px 15px;
+        th, td {
+            padding: 10px 12px;
+            border-top: 1px solid var(--border);
             text-align: left;
-            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+            font-size: 14px;
         }
 
-        th {
-            background-color: #f0f0f0;
-            font-weight: bold;
-        }
+        th { background: #f8fafc; }
 
-        tr:hover {
-            background-color: #f9f9f9;
-        }
-
-        .button {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 1rem;
-            transition: background 0.3s;
-        }
-
-        .button:hover {
-            background-color: #45a049;
-        }
-
-        #divResult {
-            display: none;
-            animation: fadeIn 0.5s;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-            }
-
-            to {
-                opacity: 1;
-            }
-        }
-
-        #thumbnail {
-            max-width: 40%;
-            display: block;
-            margin: 20px auto;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-        }
-
-        .codec-tag {
-            display: inline-block;
-            padding: 3px 8px;
-            margin-left: 8px;
-            font-size: 0.8rem;
-            border-radius: 4px;
-            background-color: #e3f2fd;
-            color: #0d47a1;
-        }
-
-        .resolution-tag {
-            color: #d32f2f;
-            font-weight: bold;
-        }
-
-        .download-link {
-            color: var(--secondary);
-            text-decoration: none;
-        }
-
-        .download-link:hover {
-            text-decoration: underline;
-        }
-
-        #log {
-            margin-top: 50px;
-            padding: 20px;
-            text-align: center;
-            color: #666;
-            font-size: 0.9rem;
-        }
-
-        .wait-msg {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-            display: none;
-        }
-
-        .format-note {
-            background-color: #fff3e0;
-            padding: 12px;
-            border-left: 4px solid #ff9800;
-            margin: 15px 0;
-            font-size: 0.95rem;
-        }
-
-        .source-type {
-            display: inline-block;
-            margin-top: 10px;
-            padding: 6px 10px;
-            border-radius: 999px;
-            background: #eef4ff;
-            color: #2d5ea8;
-            font-size: 0.9rem;
-            font-weight: 600;
-        }
-
-        .status-panel {
-            display: none;
-            margin: 18px auto 0;
-            max-width: 960px;
-            padding: 14px 16px;
-            border-radius: 8px;
-            font-size: 0.95rem;
-            line-height: 1.6;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            background: #eef6ff;
-            color: #194b80;
-            border: 1px solid #cfe3ff;
-        }
-
-        .status-panel.status-success {
-            background: #edf8ef;
-            color: #1d5f2a;
-            border-color: #cbe9d1;
-        }
-
-        .status-panel.status-error {
-            background: #fff3f3;
-            color: #9f1d1d;
-            border-color: #f5c9c9;
-        }
-
-        .status-panel.status-info {
-            background: #eef6ff;
-            color: #194b80;
-            border-color: #cfe3ff;
-        }
-
-        .status-panel a {
-            color: inherit;
-            text-decoration: underline;
-        }
-
-        .download-mode-note {
-            margin: 8px 0 20px;
-            color: #666;
-            font-size: 0.95rem;
-        }
-
-        .legacy-banner {
-            margin: 0 auto 18px;
-            max-width: 960px;
-            padding: 14px 16px;
-            border-radius: 10px;
-            background: #fff7e8;
-            border: 1px solid #f3c26b;
-            color: #7a4d00;
-            line-height: 1.7;
-        }
-
-        .legacy-banner strong {
-            display: block;
-            margin-bottom: 6px;
-            color: #6a3e00;
-        }
+        .hidden { display: none; }
+        .muted { color: var(--muted); }
+        .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+        a { color: var(--primary); }
     </style>
 </head>
-
 <body>
-    <div class="title">
-        <div>VideoInstaller 浏览器兼容版 v2.3.0</div>
-        <div class="github">
-            <a href="https://github.com/Alexis-ray/VideoInstaller" target="_blank">
-                <svg style="fill: #333" height="32" viewBox="0 0 16 16" version="1.1" width="32" aria-hidden="true">
-                    <path fill-rule="evenodd"
-                        d="M8 0C3.58 0 0 3.58 0 8C0 11.54 2.29 14.53 5.47 15.59C5.87 15.66 6.02 15.42 6.02 15.21C6.02 15.02 6.01 14.39 6.01 13.72C4 14.09 3.48 13.23 3.32 12.78C3.23 12.55 2.84 11.84 2.5 11.65C2.22 11.5 1.82 11.13 2.49 11.12C3.12 11.11 3.57 11.7 3.72 11.94C4.44 13.15 5.59 12.81 6.05 12.6C6.12 12.08 6.33 11.73 6.56 11.53C4.78 11.33 2.92 10.64 2.92 7.58C2.92 6.71 3.23 5.99 3.74 5.43C3.66 5.23 3.38 4.41 3.82 3.31C3.82 3.31 4.49 3.1 6.02 4.13C6.66 3.95 7.34 3.86 8.02 3.86C8.7 3.86 9.38 3.95 10.02 4.13C11.55 3.09 12.22 3.31 12.22 3.31C12.66 4.41 12.38 5.23 12.3 5.43C12.81 5.99 13.12 6.7 13.12 7.58C13.12 10.65 11.25 11.33 9.47 11.53C9.76 11.78 10.01 12.26 10.01 13.01C10.01 14.08 10 14.94 10 15.21C10 15.42 10.15 15.67 10.55 15.59C13.71 14.53 16 11.53 16 8C16 3.58 12.42 0 8 0Z">
-                    </path>
-                </svg>
-            </a>
+    <div class="app">
+        <h1>VideoInstaller</h1>
+
+        <div class="panel">
+            <form id="parseForm" class="row">
+                <input id="urlInput" type="url" placeholder="输入 YouTube 或 Bilibili 链接" autocomplete="off" required>
+                <button type="submit">解析</button>
+                <button id="refreshCookieBtn" type="button">刷新 Cookie</button>
+            </form>
+            <div id="status" class="status"></div>
         </div>
-    </div>
 
-    <div class="legacy-banner">
-        <strong>当前页面是浏览器兼容版（legacy 保留线），不是当前主发布的原生桌面版。</strong>
-        `legacy v2.3.0` 当前不提供正式下载，因为该线路存在启动后闪退的已知问题。如果你没有特殊兼容需求，请优先使用 GitHub Release 中提供的原生桌面版。
-    </div>
-
-    <div id="divURL">
-        <form name="parse" onsubmit="parse(); return false;">
-            <input class="search" id="url" name="url" type="url" placeholder="请输入 YouTube 或 Bilibili 视频 URL（可选原始下载或转码 H.264 MP4）"
-                autocomplete="off" required>
-        </form>
-        <div id="statusPanel" class="status-panel" role="status" aria-live="polite"></div>
-    </div>
-
-    <!-- 格式说明 -->
-    <div class="format-note">
-        <strong>提示：</strong>你可以选择“原始格式下载”或“下载并转码为H.264 MP4”。转码会更兼容，但耗时更久。
-    </div>
-
-    <div id="divResult">
-        <div style="text-align: center;">
-            <h1 id="title">解析结果</h1>
-            <div id="sourceTypeBadge" class="source-type" style="display: none;"></div>
-            <img id="thumbnail" alt="视频封面">
-            <div id="partSelector" style="margin-top: 12px; display: none;">
-                <label for="partSelect" style="margin-right: 8px;">分P：</label>
-                <select id="partSelect" class="search" style="max-width: 520px; height: 40px; padding: 0 10px;"></select>
+        <div id="resultPanel" class="panel hidden">
+            <div class="result-header">
+                <img id="thumbnail" class="thumbnail hidden" alt="视频封面">
+                <div>
+                    <h2 id="videoTitle" class="section-title">解析结果</h2>
+                    <div id="sourceMeta" class="muted"></div>
+                    <div id="partRow" class="row hidden" style="margin-top: 12px;">
+                        <label for="partSelect">分P</label>
+                        <select id="partSelect"></select>
+                    </div>
+                </div>
             </div>
-            <div style="margin-top: 10px;">
-                <button id="downloadCoverBtn" class="button" type="button" onclick="downloadThumbnail()">保存封面到视频目录</button>
+
+            <div style="margin-top: 18px;">
+                <h3 class="section-title">可用音频</h3>
+                <table id="audioTable">
+                    <thead>
+                        <tr>
+                            <th>选择</th>
+                            <th>格式</th>
+                            <th>码率</th>
+                            <th>大小</th>
+                            <th>说明</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
             </div>
-            <div class="download-mode-note">“仅下载此音频 / 仅下载此视频”会保留单独流文件；下方主按钮用于完整下载或下载后转码。</div>
-        </div>
 
-        <!-- 音频列表 -->
-        <div class="available">可用音频</div>
-        <table id="audios">
-            <tr>
-                <th>选择</th>
-                <th>格式ID</th>
-                <th>容器格式</th>
-                <th>码率</th>
-                <th>大小</th>
-                <th>详情</th>
-                <th>操作</th>
-            </tr>
-        </table>
+            <div style="margin-top: 18px;">
+                <h3 class="section-title">可用视频</h3>
+                <table id="videoTable">
+                    <thead>
+                        <tr>
+                            <th>选择</th>
+                            <th>格式</th>
+                            <th>分辨率</th>
+                            <th>编码</th>
+                            <th>码率</th>
+                            <th>大小</th>
+                            <th>说明</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
 
-        <!-- 视频列表（移除编码选择相关内容） -->
-        <div class="available">可用视频</div>
-        <table id="videos">
-            <tr>
-                <th>选择</th>
-                <th>格式ID</th>
-                <th>容器格式</th>
-                <th>分辨率</th>
-                <th>原始编码</th>
-                <th>码率</th>
-                <th>大小</th>
-                <th>操作</th>
-            </tr>
-        </table>
-
-        <div style="text-align: center; margin: 30px 0; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;">
-            <button id="downloadOriginalBtn" class="button" onclick="download(false)">下载已选格式（原始）</button>
-            <button id="downloadTranscodeBtn" class="button" onclick="download(true)">下载并转码（H.264 MP4）</button>
+            <div class="actions">
+                <button id="downloadOriginalBtn" type="button">下载已选格式</button>
+                <button id="downloadTranscodeBtn" type="button">下载并转码</button>
+            </div>
         </div>
     </div>
-
-    <!-- 加载提示 -->
-    <div class="wait-msg" id="waitParse">
-        <h3>正在解析视频，请稍候...</h3>
-    </div>
-    <div class="wait-msg" id="waitDownload">
-        <h3 id="waitDownloadText">正在下载，请稍候...</h3>
-    </div>
-    <div class="wait-msg" id="waitTranscode">
-        <h3 id="waitTranscodeText">正在转码为 H.264 MP4，请稍候...</h3>
-    </div>
-    <div id="log">
-        <p>当前版本：浏览器兼容版 v2.3.0。本页面仅作为兼容保留的 Web 入口，当前主发布线为原生 Windows 桌面版。</p>
-        <p>支持 YouTube 与 Bilibili 双站点解析下载，可保留原始文件，也可统一转码为更通用的 H.264 MP4。</p>
-        <p>如果你只是想正常下载和使用软件，请优先使用 GitHub Release 中提供的原生桌面版。</p>
-    </div>
-
-    <script src="js/jquery.js"></script>
-    <script src="js/libjrt.js"></script>
     <script>
-        // 全局变量存储解析结果
-        let videoInfo = null;
+        const state = {
+            videoInfo: null,
+            pollTimer: null
+        };
+
+        const elements = {
+            form: document.getElementById('parseForm'),
+            urlInput: document.getElementById('urlInput'),
+            refreshCookieBtn: document.getElementById('refreshCookieBtn'),
+            status: document.getElementById('status'),
+            resultPanel: document.getElementById('resultPanel'),
+            thumbnail: document.getElementById('thumbnail'),
+            videoTitle: document.getElementById('videoTitle'),
+            sourceMeta: document.getElementById('sourceMeta'),
+            partRow: document.getElementById('partRow'),
+            partSelect: document.getElementById('partSelect'),
+            audioTableBody: document.querySelector('#audioTable tbody'),
+            videoTableBody: document.querySelector('#videoTable tbody'),
+            downloadOriginalBtn: document.getElementById('downloadOriginalBtn'),
+            downloadTranscodeBtn: document.getElementById('downloadTranscodeBtn')
+        };
+
+        elements.form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            await parseVideo();
+        });
+
+        elements.refreshCookieBtn.addEventListener('click', refreshCookie);
+        elements.downloadOriginalBtn.addEventListener('click', () => downloadSelected(false));
+        elements.downloadTranscodeBtn.addEventListener('click', () => downloadSelected(true));
+        elements.partSelect.addEventListener('change', async () => {
+            const selected = getSelectedPart();
+            if (!selected?.url) return;
+            elements.urlInput.value = selected.url;
+            await parseVideo(selected.url, `已切换到分P ${selected.p}`);
+        });
+
+        const initialUrl = new URL(window.location.href).searchParams.get('url');
+        if (initialUrl) {
+            elements.urlInput.value = initialUrl;
+            parseVideo(initialUrl).catch(() => {});
+        }
+
+        async function parseVideo(explicitUrl = '', successMessage = '解析完成') {
+            const input = String(explicitUrl || elements.urlInput.value || '').trim();
+            if (!input) return;
+
+            setStatus('info', '正在解析，请稍候…');
+            elements.resultPanel.classList.add('hidden');
+
+            try {
+                const result = await requestJson(`/y2b/parse?url=${encodeURIComponent(input)}`);
+                if (!result.success) {
+                    setStatus('error', result.error || '解析失败');
+                    return;
+                }
+
+                state.videoInfo = result.result;
+                fillResult(result.result);
+                setStatus('success', successMessage);
+            } catch (error) {
+                setStatus('error', error.message || '解析失败');
+            }
+        }
+
+        async function refreshCookie() {
+            elements.refreshCookieBtn.disabled = true;
+            setStatus('info', '正在刷新 Cookie，请稍候…');
+
+            try {
+                const result = await requestJson('/y2b/refresh-cookie', {
+                    method: 'POST'
+                });
+                if (!result.success) {
+                    setStatus('error', result.error || '刷新 Cookie 失败');
+                    return;
+                }
+                setStatus('success', result.result?.message || 'Cookie 已更新');
+            } catch (error) {
+                setStatus('error', error.message || '刷新 Cookie 失败');
+            } finally {
+                elements.refreshCookieBtn.disabled = false;
+            }
+        }
+
+        function fillResult(info) {
+            elements.resultPanel.classList.remove('hidden');
+            elements.videoTitle.textContent = info.title || '解析结果';
+            elements.sourceMeta.textContent = `${labelWebsite(info.website)}${info.p ? ` · 分P ${info.p}` : ''}`;
+
+            if (info.thumbnail) {
+                elements.thumbnail.src = info.thumbnail;
+                elements.thumbnail.classList.remove('hidden');
+            } else {
+                elements.thumbnail.removeAttribute('src');
+                elements.thumbnail.classList.add('hidden');
+            }
+
+            fillParts(info.parts || [], info.p);
+            fillAudioTable(info);
+            fillVideoTable(info);
+        }
+
+        function fillParts(parts, currentP) {
+            elements.partSelect.innerHTML = '';
+            if (!Array.isArray(parts) || parts.length === 0) {
+                elements.partRow.classList.add('hidden');
+                return;
+            }
+
+            elements.partRow.classList.remove('hidden');
+            parts.forEach((part) => {
+                const option = document.createElement('option');
+                option.value = part.p;
+                option.textContent = `${part.p}. ${part.title}`;
+                option.dataset.url = part.url;
+                elements.partSelect.appendChild(option);
+            });
+            elements.partSelect.value = String(currentP || parts[0].p || '1');
+        }
+
+        function fillAudioTable(info) {
+            elements.audioTableBody.innerHTML = '';
+            (info.available?.audios || []).forEach((audio) => {
+                const checked = info.best?.audio?.id === audio.id ? 'checked' : '';
+                elements.audioTableBody.insertAdjacentHTML('beforeend', `
+                    <tr>
+                        <td><input type="radio" name="audio" value="${escapeHtml(audio.id)}" ${checked}></td>
+                        <td>${escapeHtml(audio.format || '')}</td>
+                        <td>${escapeHtml(audio.rate || '')}</td>
+                        <td>${escapeHtml(audio.size || '')}</td>
+                        <td>${escapeHtml(audio.info || '')}</td>
+                        <td><a href="#" data-single-download="audio" data-id="${escapeHtml(audio.id)}">仅下载音频</a></td>
+                    </tr>
+                `);
+            });
+        }
+
+        function fillVideoTable(info) {
+            elements.videoTableBody.innerHTML = '';
+            (info.available?.videos || []).forEach((video) => {
+                const checked = info.best?.video?.id === video.id ? 'checked' : '';
+                elements.videoTableBody.insertAdjacentHTML('beforeend', `
+                    <tr>
+                        <td><input type="radio" name="video" value="${escapeHtml(video.id)}" ${checked}></td>
+                        <td>${escapeHtml(video.format || '')}</td>
+                        <td>${escapeHtml(video.scale || '')}</td>
+                        <td>${escapeHtml(video.codec || '')}</td>
+                        <td>${escapeHtml(video.rate || '')}</td>
+                        <td>${escapeHtml(video.size || '')}</td>
+                        <td>${escapeHtml(video.info || '')}</td>
+                        <td><a href="#" data-single-download="video" data-id="${escapeHtml(video.id)}">仅下载视频</a></td>
+                    </tr>
+                `);
+            });
+
+            document.querySelectorAll('[data-single-download]').forEach((link) => {
+                link.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    downloadSingle(link.dataset.id);
+                });
+            });
+        }
+
+        function downloadSingle(formatId) {
+            if (!state.videoInfo) return;
+            const url = buildDownloadUrl(formatId, false);
+            startPolling(url, false);
+        }
+
+        function downloadSelected(transcode) {
+            if (!state.videoInfo) return;
+
+            const audio = document.querySelector('input[name="audio"]:checked')?.value;
+            const video = document.querySelector('input[name="video"]:checked')?.value;
+            if (!audio || !video) {
+                setStatus('error', '请先选择音频和视频格式');
+                return;
+            }
+
+            const url = buildDownloadUrl(`${video}x${audio}`, transcode);
+            startPolling(url, transcode);
+        }
+
+        function startPolling(url, transcode) {
+            clearPolling();
+            setStatus('info', transcode ? '已开始下载并转码，请稍候…' : '已开始下载，请稍候…');
+
+            state.pollTimer = window.setInterval(async () => {
+                try {
+                    const response = await requestJson(url);
+                    if (!response.success) {
+                        clearPolling();
+                        setStatus('error', response.error || '下载失败');
+                        return;
+                    }
+
+                    const result = response.result || {};
+                    if (result.downloading) {
+                        setStatus('info', result.dest || '正在处理，请稍候…');
+                        return;
+                    }
+
+                    clearPolling();
+                    if (!result.downloadSucceed) {
+                        setStatus('error', result.error || '下载失败');
+                        return;
+                    }
+
+                    setStatus('success', buildDownloadSummary(result), true);
+                } catch (error) {
+                    clearPolling();
+                    setStatus('error', error.message || '下载失败');
+                }
+            }, 2000);
+        }
+
+        function clearPolling() {
+            if (state.pollTimer) {
+                window.clearInterval(state.pollTimer);
+                state.pollTimer = null;
+            }
+        }
+
+        function buildDownloadUrl(format, transcode) {
+            const info = state.videoInfo;
+            const params = new URLSearchParams({
+                website: info.website,
+                v: info.v,
+                title: info.title || '',
+                format,
+                transcode: transcode ? '1' : '0'
+            });
+            if (info.p) params.set('p', info.p);
+            if (info.source) params.set('source', info.source);
+            return `/y2b/download?${params.toString()}`;
+        }
+
+        function buildDownloadSummary(result) {
+            const lines = [`<strong>${result.transcode ? '下载并转码完成' : '下载完成'}</strong>`];
+            if (result.dest) lines.push(linkLine('主文件', result.dest));
+            if (result.video && result.video !== result.dest) lines.push(linkLine('视频文件', result.video));
+            if (result.audio && result.audio !== result.dest) lines.push(linkLine('音频文件', result.audio));
+            if (result.metadata) lines.push(linkLine('元数据', result.metadata));
+            if (result.folder) lines.push(linkLine('目录', result.folder));
+            return lines.join('<br>');
+        }
+
+        function linkLine(label, path) {
+            const normalized = path.startsWith('/') ? path : `/${path}`;
+            return `${label}：<a href="${escapeHtml(normalized)}" target="_blank">${escapeHtml(normalized)}</a>`;
+        }
+
+        function getSelectedPart() {
+            const option = elements.partSelect.selectedOptions[0];
+            if (!option) return null;
+            return { p: option.value, url: option.dataset.url || '' };
+        }
+
+        async function requestJson(url, options = {}) {
+            const response = await fetch(url, {
+                ...options,
+                headers: {
+                    'x-videoinstaller-request': '1',
+                    ...(options.headers || {})
+                }
+            });
+            if (!response.ok) {
+                throw new Error(`请求失败：${response.status}`);
+            }
+            return response.json();
+        }
+
+        function setStatus(type, message, allowHtml = false) {
+            elements.status.className = `status ${type}`;
+            if (allowHtml) {
+                elements.status.innerHTML = message || '';
+            } else {
+                elements.status.textContent = message || '';
+            }
+        }
+
+        function labelWebsite(website) {
+            return website === 'b2b' ? 'Bilibili' : 'YouTube';
+        }
 
         function escapeHtml(text) {
             return String(text || '')
@@ -366,472 +490,6 @@
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
         }
-
-        function showStatus(type, message) {
-            const panel = $('#statusPanel');
-            panel.removeClass('status-success status-error status-info')
-                .addClass(`status-${type || 'info'}`)
-                .html(message || '')
-                .show();
-        }
-
-        function showError(message) {
-            showStatus('error', escapeHtml(message || '操作失败'));
-        }
-
-        function showInfo(message) {
-            showStatus('info', escapeHtml(message || '正在处理，请稍候'));
-        }
-
-        function showSuccess(message) {
-            showStatus('success', message || '操作已完成');
-        }
-
-        function clearStatus() {
-            $('#statusPanel').hide().removeClass('status-success status-error status-info').empty();
-        }
-
-        // 初始化页面
-        $(() => {
-            // 从URL参数加载视频链接
-            const urlParam = new URL(document.location.href).searchParams.get('url');
-            if (urlParam) {
-                const decodedUrl = decodeURIComponent(urlParam)
-                    .replace('y2b', 'youtube')
-                    .replace('y2', 'youtu');
-                $('#url').val(decodedUrl);
-                parse(); // 自动解析
-            }
-            $('#url').focus();
-        });
-
-        /**
-         * 解析视频信息
-         */
-        function parse() {
-            const url = $('#url').val().trim();
-            if (!url) return;
-
-            // 显示加载提示
-            clearStatus();
-            $('#divResult').hide();
-            $('#waitParse').show();
-            showInfo('正在解析链接并获取可用格式，请稍候…');
-
-            // 发送解析请求
-            $.ajax({
-                url: `/y2b/parse?url=${encodeURIComponent(url.replace('youtube', 'y2b').replace('youtu', 'y2'))}`,
-                success: (res) => {
-                    $('#waitParse').hide();
-                    if (!res.success) {
-                        showError(`解析失败：${res.error || '未返回有效结果'}`);
-                        return;
-                    }
-                    videoInfo = res.result;
-                    fillResult(videoInfo); // 填充解析结果
-                    $('#divResult').show();
-                    showSuccess(`解析完成：${escapeHtml(videoInfo.title || '已获取视频信息')}，请选择需要的下载方式。`);
-                },
-                error: (xhr) => {
-                    $('#waitParse').hide();
-                    showError(`解析出错：${xhr.statusText || '网络错误'}`);
-                }
-            });
-        }
-
-        /**
-         * 填充解析结果到页面
-         */
-        function fillResult(info) {
-            // 填充基本信息
-            $('#title').text(info.title || '视频信息');
-            const candidates = (info.thumbnailCandidates && info.thumbnailCandidates.length)
-                ? info.thumbnailCandidates
-                : [info.thumbnail].filter(Boolean);
-            const proxyCandidates = candidates.map((src) => getProxyImg(src));
-            $('#thumbnail')
-                .data('candidates', proxyCandidates)
-                .data('index', 0)
-                .off('error')
-                .on('error', function () {
-                    const list = $(this).data('candidates') || [];
-                    let index = Number($(this).data('index') || 0) + 1;
-                    if (index < list.length) {
-                        $(this).data('index', index).attr('src', list[index]);
-                    } else {
-                        showInfo('封面预览加载失败，但不影响解析和下载；如有需要，仍可稍后尝试保存封面。');
-                    }
-                });
-            $('#thumbnail').attr('src', proxyCandidates[0] || '');
-            $('#downloadCoverBtn').data('thumbnail-src', candidates[0] || info.thumbnail || '');
-            bindSourceType(info);
-            bindParts(info);
-
-            // 填充音频列表
-            const audioTable = $('#audios');
-            audioTable.find('tr:gt(0)').remove(); // 清空现有行
-            info.available.audios.forEach(audio => {
-                const row = $(`
-                    <tr>
-                        <td><input type="radio" name="audio" value="${audio.id}" ${audio.id === info.best.audio.id ? 'checked' : ''}></td>
-                        <td>${audio.id}</td>
-                        <td>${audio.format}</td>
-                        <td>${audio.rate}</td>
-                        <td>${audio.size}</td>
-                        <td>${audio.info}</td>
-                        <td><a class="download-link" href="javascript:downloadSingle('audio', '${audio.id}')">仅下载此音频</a></td>
-                    </tr>
-                `);
-                audioTable.append(row);
-            });
-
-            // 填充视频列表（修改为显示原始编码，而非可选择的编码）
-            const videoTable = $('#videos');
-            videoTable.find('tr:gt(0)').remove(); // 清空现有行
-            info.available.videos.forEach(video => {
-                // 显示原始编码（仅作参考，最终会转为H.264）
-                const codecLabel = video.codec ?
-                    `<span class="codec-tag">原始: ${getCodecName(video.codec)}</span>` : '';
-                // 突出显示4K分辨率
-                const resolution = video.scale.includes('2160') ?
-                    `<span class="resolution-tag">${video.scale} (4K)</span>` : video.scale;
-
-                const row = $(`
-                    <tr>
-                        <td><input type="radio" name="video" value="${video.id}" ${video.id === info.best.video.id ? 'checked' : ''}></td>
-                        <td>${video.id}</td>
-                        <td>${video.format}</td>
-                        <td>${resolution}</td>
-                        <td>${codecLabel}</td>
-                        <td>${video.rate}</td>
-                        <td>${video.size}</td>
-                        <td><a class="download-link" href="javascript:downloadSingle('video', '${video.id}')">仅下载此视频</a></td>
-                    </tr>
-                `);
-                videoTable.append(row);
-            });
-
-        }
-
-        /**
-         * 下载单个音频/视频
-         */
-        function downloadSingle(type, id) {
-            if (!videoInfo) return;
-            clearStatus();
-            const typeLabel = type === 'audio' ? '音频' : '视频';
-            showInfo(`正在准备仅下载${typeLabel}流，请稍候…`);
-            const url = `/y2b/download?website=${videoInfo.website}&v=${videoInfo.v}&title=${encodeURIComponent(videoInfo.title || '')}&p=${videoInfo.p || ''}&format=${id}&transcode=0`;
-            startDownload(appendSourceToDownloadUrl(url));
-        }
-
-        /**
-         * 合并下载（音频+视频）
-         */
-        function download(transcode) {
-            if (!videoInfo) return;
-            const selectedVideo = $('input[name="video"]:checked').val();
-            const selectedAudio = $('input[name="audio"]:checked').val();
-            if (!selectedVideo || !selectedAudio) {
-                showError('请先选择音频和视频格式，再开始完整下载。');
-                return;
-            }
-
-            clearStatus();
-            const transcodeFlag = transcode ? '1' : '0';
-            const url = `/y2b/download?website=${videoInfo.website}&v=${videoInfo.v}&title=${encodeURIComponent(videoInfo.title || '')}&p=${videoInfo.p || ''}&format=${selectedVideo}x${selectedAudio}&transcode=${transcodeFlag}`;
-            startDownload(appendSourceToDownloadUrl(url), transcode);
-        }
-
-        /**
-         * 启动下载流程
-         */
-        function startDownload(url, transcode = false) {
-            showDownloadModal(transcode);
-            showInfo(transcode
-                ? '已开始下载并将在完成后自动转码为 H.264 MP4，请耐心等待…'
-                : '已开始下载原始文件，请稍候…');
-            const pollInterval = setInterval(() => {
-                $.ajax({
-                    url: url,
-                    success: (res) => {
-                        if (!res.success) {
-                            clearInterval(pollInterval);
-                            hideAllWaitModals();
-                            showError(`下载失败：${res.error || res.result?.metadata || '未知错误'}`);
-                            return;
-                        }
-
-                        const result = res.result;
-                        if (result.phase === 'downloading-video' || result.phase === 'downloading-audio' || result.phase === 'downloading') {
-                            showDownloadModal(result.transcode);
-                            showInfo(result.dest || '正在下载文件，请稍候…');
-                            return;
-                        }
-
-                        if (result.phase === 'transcoding') {
-                            showTranscodeModal();
-                            showInfo(result.dest || '正在转码，请稍候…');
-                            return;
-                        }
-
-                        if (!result.downloading) {
-                            clearInterval(pollInterval);
-                            hideAllWaitModals();
-                            if (result.downloadSucceed) {
-                                showSuccess(buildDownloadSummary(result));
-                            } else {
-                                showError(`下载失败：${result.error || result.metadata || '未知错误'}`);
-                            }
-                        }
-                    },
-                    error: () => {
-                        clearInterval(pollInterval);
-                        hideAllWaitModals();
-                        showError('下载请求失败，请检查服务是否仍在运行。');
-                    }
-                });
-            }, 2000); // 每2秒轮询一次
-        }
-
-        function showDownloadModal(transcode) {
-            $('#waitTranscode').hide();
-            $('#waitDownloadText').text(transcode ? '正在下载原始音视频文件，请稍候...' : '正在下载原始文件，请稍候...');
-            $('#waitDownload').show();
-        }
-
-        function showTranscodeModal() {
-            $('#waitDownload').hide();
-            $('#waitTranscodeText').text('正在转码为 H.264 MP4，请稍候...');
-            $('#waitTranscode').show();
-        }
-
-        function hideAllWaitModals() {
-            $('#waitDownload').hide();
-            $('#waitTranscode').hide();
-        }
-
-        /**
-         * 代理封面图片
-         */
-        function getProxyImg(src) {
-            if (src?.startsWith('https://i.ytimg.com/') || src?.match(/^https?:\/\/i\d\.hdslb\.com\//) || src?.match(/^https?:\/\/w\.hdslb\.com\//)) {
-                return `/pxy?url=${encodeURIComponent(src)}`;
-            }
-            return src;
-        }
-
-        function buildThumbnailEndpoint(info, download) {
-            const params = new URLSearchParams({
-                website: info.website || '',
-                v: info.v || '',
-                src: info.thumbnail || '',
-                download: download ? '1' : '0',
-                t: String(Date.now())
-            });
-            return `/y2b/thumbnail?${params.toString()}`;
-        }
-
-        function downloadThumbnail() {
-            if (!videoInfo) return;
-            const src = $('#downloadCoverBtn').data('thumbnail-src') || videoInfo.thumbnail || '';
-            if (!src) {
-                showError('当前没有可用封面图。');
-                return;
-            }
-            clearStatus();
-            showInfo('正在保存封面到视频目录，请稍候…');
-            const params = new URLSearchParams({
-                website: videoInfo.website || '',
-                v: videoInfo.v || '',
-                title: videoInfo.title || '',
-                src,
-                save: '1',
-                t: String(Date.now())
-            });
-            $.ajax({
-                url: `/y2b/thumbnail?${params.toString()}`,
-                success: (res) => {
-                    if (!res.success) {
-                        showError(`封面保存失败：${res.error || '未知错误'}`);
-                        return;
-                    }
-                    const coverPath = toDisplayPath(res.result.dest);
-                    showSuccess(`封面已保存到：<a href="${escapeHtml(coverPath)}" target="_blank">${escapeHtml(coverPath)}</a>`);
-                },
-                error: () => showError('封面保存请求失败，请稍后重试。')
-            });
-        }
-
-        function bindParts(info) {
-            const parts = Array.isArray(info.parts) ? info.parts : [];
-            const selector = $('#partSelector');
-            const select = $('#partSelect');
-            select.empty();
-
-            if (!parts.length) {
-                selector.hide();
-                return;
-            }
-
-            parts.forEach(part => {
-                const p = String(part.p || '');
-                const title = String(part.title || `分P ${p}`).trim();
-                const option = $('<option></option>')
-                    .val(p)
-                    .text(`P${p} - ${title}`)
-                    .data('part-url', part.url || '');
-                select.append(option);
-            });
-
-            const targetP = String(info.p || parts[0].p || '1');
-            select.val(targetP);
-            if (!select.val()) {
-                select.val(parts[0].p || '1');
-            }
-
-            selector.show();
-
-            select.off('change').on('change', function () {
-                if (!videoInfo) return;
-                const selectedP = String($(this).val() || '').trim();
-                const selectedUrl = $(this).find('option:selected').data('part-url') || '';
-                videoInfo.p = selectedP;
-                if (selectedUrl) {
-                    videoInfo.source = selectedUrl;
-                } else {
-                    showInfo('当前分P缺少来源链接，已尝试按现有上下文重新解析。');
-                }
-                parseByCurrentSelection();
-            });
-        }
-
-        function bindSourceType(info) {
-            const badge = $('#sourceTypeBadge');
-            const label = getSourceTypeLabel(info.sourceType, info.website);
-            if (!label) {
-                badge.hide().text('');
-                return;
-            }
-            badge.text(label).show();
-        }
-
-        function getSourceTypeLabel(sourceType, website) {
-            const type = String(sourceType || '').trim();
-            if (!type) {
-                return website === 'y2b' ? '来源：YouTube 视频' : '来源：Bilibili 视频';
-            }
-
-            const labels = {
-                'youtube-watch': '来源：YouTube 标准页',
-                'youtube-short': '来源：YouTube Shorts',
-                'youtube-shortlink': '来源：YouTube 短链',
-                'bilibili-short': '来源：Bilibili 短链',
-                'bilibili-video': '来源：Bilibili 视频',
-                'bilibili-part': '来源：Bilibili 分P视频',
-                'bilibili-multi-part': '来源：Bilibili 多P视频',
-                'bilibili-bangumi-episode': '来源：Bilibili 番剧剧集',
-                'bilibili-bangumi-season': '来源：Bilibili 番剧季页',
-                'bilibili-medialist': '来源：Bilibili 合集'
-            };
-
-            return labels[type] || `来源：${type}`;
-        }
-
-        function parseByCurrentSelection() {
-            if (!videoInfo) return;
-            const source = String(videoInfo.source || '').trim();
-            if (!source) {
-                showError('当前分P缺少可重新解析的来源链接。');
-                return;
-            }
-
-            clearStatus();
-            $('#divResult').hide();
-            $('#waitParse').show();
-            showInfo('正在切换分P并重新解析，请稍候…');
-            $.ajax({
-                url: `/y2b/parse?url=${encodeURIComponent(source)}`,
-                success: (res) => {
-                    $('#waitParse').hide();
-                    if (!res.success) {
-                        showError(`分P切换失败：${res.error || '未知错误'}`);
-                        return;
-                    }
-                    videoInfo = res.result;
-                    fillResult(videoInfo);
-                    $('#divResult').show();
-                    showSuccess(`已切换到分P ${escapeHtml(videoInfo.p || '')}，可以继续下载。`);
-                },
-                error: (xhr) => {
-                    $('#waitParse').hide();
-                    showError(`分P切换失败：${xhr.statusText || '网络错误'}`);
-                }
-            });
-        }
-
-        function appendSourceToDownloadUrl(url) {
-            const source = String(videoInfo?.source || '').trim();
-            if (!source) return url;
-            const glue = url.includes('?') ? '&' : '?';
-            return `${url}${glue}source=${encodeURIComponent(source)}`;
-        }
-
-        function toDisplayPath(pathText) {
-            const text = String(pathText || '').trim();
-            if (!text) return '/';
-            return text.startsWith('/') ? text : `/${text}`;
-        }
-
-        function buildDownloadSummary(result) {
-            const title = escapeHtml(result.title || videoInfo?.title || '未命名视频');
-            const mode = result.transcode ? '下载并转码完成（H.264 MP4）' : '下载完成（原始格式）';
-            const lines = [`<strong>${mode}</strong>`, `标题：${title}`];
-
-            if (result.dest) {
-                const dest = toDisplayPath(result.dest);
-                lines.push(`主文件：<a href="${escapeHtml(dest)}" target="_blank">${escapeHtml(dest)}</a>`);
-            }
-            if (result.video) {
-                const video = toDisplayPath(result.video);
-                lines.push(`视频文件：<a href="${escapeHtml(video)}" target="_blank">${escapeHtml(video)}</a>`);
-            }
-            if (result.audio && result.audio !== result.video) {
-                const audio = toDisplayPath(result.audio);
-                lines.push(`音频文件：<a href="${escapeHtml(audio)}" target="_blank">${escapeHtml(audio)}</a>`);
-            }
-            if (result.metadata) {
-                const metadata = toDisplayPath(result.metadata);
-                lines.push(`元数据：<a href="${escapeHtml(metadata)}" target="_blank">${escapeHtml(metadata)}</a>`);
-            }
-            if (result.folder) {
-                const folder = toDisplayPath(result.folder);
-                lines.push(`目录：<a href="${escapeHtml(folder)}" target="_blank">${escapeHtml(folder)}</a>`);
-            }
-            if (result.openFolder?.attempted) {
-                lines.push(result.openFolder.opened
-                    ? '已尝试自动打开目标文件夹。'
-                    : `自动打开文件夹失败：${escapeHtml(result.openFolder.error || '请手动打开目录')}`);
-            }
-
-            return lines.join('<br>');
-        }
-
-        /**
-         * 格式化编码名称（仅作参考，显示原始编码）
-         */
-        function getCodecName(codec) {
-            const codecMap = {
-                'avc1': 'H.264',
-                'hevc': 'H.265',
-                'vp9': 'VP9',
-                'av01': 'AV1'
-            };
-            const mainCodec = codec.split('.')[0];
-            return codecMap[mainCodec] || mainCodec;
-        }
-
     </script>
 </body>
-
 </html>
