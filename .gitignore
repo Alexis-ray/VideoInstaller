@@ -2,3 +2,4 @@ node_modules/
 .runtime-tools/
 temp/
 cookies.txt
+.sisyphus/
