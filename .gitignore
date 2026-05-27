@@ -4,15 +4,9 @@ temp/
 cookies.txt
 logs/
 .sisyphus/
-.vs/
-.idea/
-.vscode/
 *.log
 *.tmp
 *.temp
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 .DS_Store
 Thumbs.db
 Desktop.ini
