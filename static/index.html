@@ -85,6 +85,41 @@
         .status.info { display: block; background: #eff6ff; color: #1d4ed8; }
         .status.success { display: block; background: #ecfdf3; color: var(--success); }
         .status.error { display: block; background: #fef2f2; color: var(--error); }
+        .status h4 { margin: 10px 0 6px; font-size: 15px; }
+        .status ul { margin: 8px 0 0 20px; padding: 0; }
+        .status li { margin: 6px 0; }
+        .status p { margin: 0; }
+        .status p + p { margin-top: 8px; }
+        .status details {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(31, 35, 40, 0.12);
+        }
+        .status summary {
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .status textarea {
+            width: 100%;
+            min-height: 140px;
+            margin-top: 10px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fff;
+            color: var(--text);
+            font: 13px/1.5 Consolas, "Courier New", monospace;
+            resize: vertical;
+        }
+        .status code {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 6px;
+            background: rgba(15, 23, 42, 0.08);
+            color: inherit;
+            font-family: Consolas, monospace;
+            font-size: 13px;
+        }
 
         .result-header {
             display: flex;
@@ -137,7 +172,7 @@
                 <button type="submit">解析</button>
                 <button id="refreshCookieBtn" type="button">刷新 Cookie</button>
             </form>
-            <div id="status" class="status"></div>
+            <div id="parseStatus" class="status"></div>
         </div>
 
         <div id="resultPanel" class="panel hidden">
@@ -190,9 +225,11 @@
             </div>
 
             <div class="actions">
+                <button id="downloadCoverBtn" type="button">下载封面</button>
                 <button id="downloadOriginalBtn" type="button">下载已选格式</button>
                 <button id="downloadTranscodeBtn" type="button">下载并转码</button>
             </div>
+            <div id="downloadStatus" class="status"></div>
         </div>
     </div>
     <script>
@@ -205,7 +242,7 @@
             form: document.getElementById('parseForm'),
             urlInput: document.getElementById('urlInput'),
             refreshCookieBtn: document.getElementById('refreshCookieBtn'),
-            status: document.getElementById('status'),
+            parseStatus: document.getElementById('parseStatus'),
             resultPanel: document.getElementById('resultPanel'),
             thumbnail: document.getElementById('thumbnail'),
             videoTitle: document.getElementById('videoTitle'),
@@ -214,6 +251,8 @@
             partSelect: document.getElementById('partSelect'),
             audioTableBody: document.querySelector('#audioTable tbody'),
             videoTableBody: document.querySelector('#videoTable tbody'),
+            downloadCoverBtn: document.getElementById('downloadCoverBtn'),
+            downloadStatus: document.getElementById('downloadStatus'),
             downloadOriginalBtn: document.getElementById('downloadOriginalBtn'),
             downloadTranscodeBtn: document.getElementById('downloadTranscodeBtn')
         };
@@ -224,6 +263,7 @@
         });
 
         elements.refreshCookieBtn.addEventListener('click', refreshCookie);
+        elements.downloadCoverBtn.addEventListener('click', downloadCover);
         elements.downloadOriginalBtn.addEventListener('click', () => downloadSelected(false));
         elements.downloadTranscodeBtn.addEventListener('click', () => downloadSelected(true));
         elements.partSelect.addEventListener('change', async () => {
@@ -243,39 +283,40 @@
             const input = String(explicitUrl || elements.urlInput.value || '').trim();
             if (!input) return;
 
-            setStatus('info', '正在解析，请稍候…');
+            setParseStatus('info', '正在解析，请稍候…');
             elements.resultPanel.classList.add('hidden');
+            clearDownloadStatus();
 
             try {
                 const result = await requestJson(`/y2b/parse?url=${encodeURIComponent(input)}`);
                 if (!result.success) {
-                    setStatus('error', result.error || '解析失败');
+                    setParseStatus('error', result.error || '解析失败');
                     return;
                 }
 
                 state.videoInfo = result.result;
                 fillResult(result.result);
-                setStatus('success', successMessage);
+                setParseStatus('success', successMessage);
             } catch (error) {
-                setStatus('error', error.message || '解析失败');
+                setParseStatus('error', error.message || '解析失败');
             }
         }
 
         async function refreshCookie() {
             elements.refreshCookieBtn.disabled = true;
-            setStatus('info', '正在刷新 Cookie，请稍候…');
+            setParseStatus('info', '正在刷新 Cookie，请稍候…');
 
             try {
                 const result = await requestJson('/y2b/refresh-cookie', {
                     method: 'POST'
                 });
                 if (!result.success) {
-                    setStatus('error', result.error || '刷新 Cookie 失败');
+                    setParseStatus('error', formatCookieRefreshFailure(result), true);
                     return;
                 }
-                setStatus('success', result.result?.message || 'Cookie 已更新');
+                setParseStatus('success', result.result?.message || 'Cookie 已更新');
             } catch (error) {
-                setStatus('error', error.message || '刷新 Cookie 失败');
+                setParseStatus('error', error.message || '刷新 Cookie 失败');
             } finally {
                 elements.refreshCookieBtn.disabled = false;
             }
@@ -366,13 +407,18 @@
             startPolling(url, false);
         }
 
+        function downloadCover() {
+            if (!state.videoInfo) return;
+            startPolling(buildCoverDownloadUrl(), false, true);
+        }
+
         function downloadSelected(transcode) {
             if (!state.videoInfo) return;
 
             const audio = document.querySelector('input[name="audio"]:checked')?.value;
             const video = document.querySelector('input[name="video"]:checked')?.value;
             if (!audio || !video) {
-                setStatus('error', '请先选择音频和视频格式');
+                setDownloadStatus('error', '请先选择音频和视频格式');
                 return;
             }
 
@@ -380,35 +426,35 @@
             startPolling(url, transcode);
         }
 
-        function startPolling(url, transcode) {
+        function startPolling(url, transcode, isCover = false) {
             clearPolling();
-            setStatus('info', transcode ? '已开始下载并转码，请稍候…' : '已开始下载，请稍候…');
+            setDownloadStatus('info', isCover ? '已开始下载封面，请稍候…' : transcode ? '已开始下载并转码，请稍候…' : '已开始下载，请稍候…');
 
             state.pollTimer = window.setInterval(async () => {
                 try {
                     const response = await requestJson(url);
                     if (!response.success) {
                         clearPolling();
-                        setStatus('error', response.error || '下载失败');
+                        setDownloadStatus('error', response.error || (isCover ? '下载封面失败' : '下载失败'));
                         return;
                     }
 
                     const result = response.result || {};
                     if (result.downloading) {
-                        setStatus('info', result.dest || '正在处理，请稍候…');
+                        setDownloadStatus('info', result.dest || '正在处理，请稍候…');
                         return;
                     }
 
                     clearPolling();
                     if (!result.downloadSucceed) {
-                        setStatus('error', result.error || '下载失败');
+                        setDownloadStatus('error', result.error || (isCover ? '下载封面失败' : '下载失败'));
                         return;
                     }
 
-                    setStatus('success', buildDownloadSummary(result), true);
+                    setDownloadStatus('success', buildDownloadSummary(result, isCover), true);
                 } catch (error) {
                     clearPolling();
-                    setStatus('error', error.message || '下载失败');
+                    setDownloadStatus('error', error.message || (isCover ? '下载封面失败' : '下载失败'));
                 }
             }, 2000);
         }
@@ -434,13 +480,28 @@
             return `/y2b/download?${params.toString()}`;
         }
 
-        function buildDownloadSummary(result) {
-            const lines = [`<strong>${result.transcode ? '下载并转码完成' : '下载完成'}</strong>`];
+        function buildCoverDownloadUrl() {
+            const info = state.videoInfo;
+            const params = new URLSearchParams({
+                website: info.website,
+                v: info.v,
+                title: info.title || '',
+                thumbnail: info.thumbnail || ''
+            });
+            if (info.p) params.set('p', info.p);
+            if (info.source) params.set('source', info.source);
+            return `/y2b/download-cover?${params.toString()}`;
+        }
+
+        function buildDownloadSummary(result, isCover = false) {
+            const lines = [`<strong>${isCover ? '封面下载完成' : result.transcode ? '下载并转码完成' : '下载完成'}</strong>`];
             if (result.dest) lines.push(linkLine('主文件', result.dest));
             if (result.video && result.video !== result.dest) lines.push(linkLine('视频文件', result.video));
             if (result.audio && result.audio !== result.dest) lines.push(linkLine('音频文件', result.audio));
+            if (result.cover && result.cover !== result.dest) lines.push(linkLine('封面文件', result.cover));
             if (result.metadata) lines.push(linkLine('元数据', result.metadata));
             if (result.folder) lines.push(linkLine('目录', result.folder));
+            if (result.openFolder?.message) lines.push(`自动打开目录：${escapeHtml(result.openFolder.message)}`);
             return lines.join('<br>');
         }
 
@@ -469,17 +530,99 @@
             return response.json();
         }
 
-        function setStatus(type, message, allowHtml = false) {
-            elements.status.className = `status ${type}`;
+        function setParseStatus(type, message, allowHtml = false) {
+            setStatus(elements.parseStatus, type, message, allowHtml);
+        }
+
+        function setDownloadStatus(type, message, allowHtml = false) {
+            setStatus(elements.downloadStatus, type, message, allowHtml);
+        }
+
+        function clearDownloadStatus() {
+            elements.downloadStatus.className = 'status';
+            elements.downloadStatus.textContent = '';
+        }
+
+        function setStatus(node, type, message, allowHtml = false) {
+            node.className = `status ${type}`;
             if (allowHtml) {
-                elements.status.innerHTML = message || '';
+                node.innerHTML = message || '';
             } else {
-                elements.status.textContent = message || '';
+                node.textContent = message || '';
             }
         }
 
         function labelWebsite(website) {
             return website === 'b2b' ? 'Bilibili' : 'YouTube';
+        }
+
+        function formatCookieRefreshFailure(result) {
+            const details = result?.details || {};
+            const attempts = Array.isArray(details.attempts) ? details.attempts : [];
+            const lines = [
+                '<p><strong>自动刷新失败：当前环境下浏览器 Cookie 自动提取不可用。</strong></p>',
+                '<p>可改用 <code>cookies.txt</code>，或从浏览器导出 Cookie 后导入。</p>'
+            ];
+
+            if (attempts.length || details.fallback?.message || result?.error) {
+                lines.push('<details>');
+                lines.push('<summary>查看详细诊断</summary>');
+
+                if (attempts.length) {
+                    lines.push('<ul>');
+                    for (const attempt of attempts) {
+                        lines.push(`<li>${formatCookieRefreshAttemptSummary(attempt)}</li>`);
+                    }
+                    lines.push('</ul>');
+                }
+
+                lines.push(`<textarea readonly>${escapeHtml(formatCookieRefreshDiagnosticsText(result, details, attempts))}</textarea>`);
+                lines.push('</details>');
+            }
+
+            return lines.join('');
+        }
+
+        function formatCookieRefreshAttemptSummary(attempt) {
+            const source = `${attempt?.browserSpec || `${attempt?.browser || 'unknown'}:${attempt?.profile || ''}`}`;
+            return `<code>${escapeHtml(source)}</code> → <code>${escapeHtml(attempt?.status || 'unknown')}</code>`;
+        }
+
+        function formatCookieRefreshDiagnosticsText(result, details, attempts) {
+            const lines = [result?.error || '刷新 Cookie 失败'];
+
+            for (const attempt of attempts) {
+                lines.push(formatCookieRefreshAttempt(attempt));
+            }
+
+            if (details?.fallback?.message) {
+                lines.push(`Fallback: ${details.fallback.message}`);
+            }
+
+            return lines.join('\n\n');
+        }
+
+        function formatCookieRefreshAttempt(attempt) {
+            const source = `${attempt?.browserSpec || `${attempt?.browser || 'unknown'}:${attempt?.profile || ''}`}`;
+            const segments = [source];
+
+            if (attempt?.status) {
+                segments.push(`状态：${attempt.status}`);
+            }
+            if (attempt?.cookieDatabase) {
+                segments.push(`数据库：${attempt.cookieDatabase}`);
+            }
+            if (typeof attempt?.cookieDatabaseExists === 'boolean') {
+                segments.push(`DB存在：${attempt.cookieDatabaseExists ? '是' : '否'}`);
+            }
+            if (attempt?.error) {
+                segments.push(`错误：${attempt.error}`);
+            }
+            if (attempt?.recommendation) {
+                segments.push(`建议：${attempt.recommendation}`);
+            }
+
+            return segments.join('；');
         }
 
         function escapeHtml(text) {

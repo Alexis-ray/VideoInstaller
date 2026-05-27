@@ -11,7 +11,8 @@
     "disable": false,
     "proxy": "http://127.0.0.1:7890",
     "proxyFallbackDirect": true,
-    "thumbnailTimeout": 8000,
+    "thumbnailTimeout": 20000,
+    "thumbnailRetryCount": 2,
     "taskTimeout": {
         "parse": 60000,
         "download": 3600000

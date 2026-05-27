@@ -1,6 +1,7 @@
 const express = require('express');
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('fs');
 const { join, resolve, isAbsolute } = require('path');
+const { spawn } = require('child_process');
 const ffmpegStatic = require('ffmpeg-static');
 const { createDownloader } = require('./downloader');
 
@@ -14,6 +15,8 @@ const DEFAULT_CONFIG = {
     cookieAutoProfile: 'Default',
     cookieAutoProfilePath: '',
     proxy: '',
+    thumbnailTimeout: 20000,
+    thumbnailRetryCount: 2,
     taskTimeout: {
         parse: 60000,
         download: 3600000
@@ -50,18 +53,44 @@ function start() {
         }
     });
 
+    app.get('/y2b/download-cover', requireApiRequest, (req, res) => {
+        try {
+            res.send(downloader.ensureCoverDownload(req.query));
+        } catch (error) {
+            res.send({ success: false, error: error.message || '下载封面失败' });
+        }
+    });
+
     app.post('/y2b/refresh-cookie', requireApiRequest, async (req, res) => {
         try {
             const result = await downloader.refreshCookies();
             res.send({ success: true, result });
         } catch (error) {
-            res.send({ success: false, error: error.message || '刷新 Cookie 失败' });
+            res.send({ success: false, error: error.message || '刷新 Cookie 失败', details: error.details || null });
         }
     });
 
     app.listen(runtime.config.port, runtime.config.address, () => {
-        console.log(`服务已启动：http://${runtime.config.address}:${runtime.config.port}`);
+        const url = `http://${runtime.config.address}:${runtime.config.port}`;
+        console.log(`服务已启动：${url}`);
+        openBrowser(url);
     });
+}
+
+function openBrowser(url) {
+    const targetUrl = String(url || '').trim();
+    if (!targetUrl) return;
+
+    try {
+        const child = spawn('cmd', ['/c', 'start', '', targetUrl], {
+            windowsHide: true,
+            detached: true,
+            stdio: 'ignore'
+        });
+        child.unref();
+    } catch (error) {
+        console.warn(`自动打开浏览器失败: ${error.message}`);
+    }
 }
 
 function loadConfig() {

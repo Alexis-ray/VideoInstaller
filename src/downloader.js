@@ -1,11 +1,15 @@
-const { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } = require('fs');
-const { extname, join } = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, createWriteStream, unlinkSync } = require('fs');
+const { dirname, extname, join, resolve } = require('path');
+const { execFile, spawn, spawnSync } = require('child_process');
 const https = require('https');
+const http = require('http');
 
 const FORCE_RECODE_FORMAT = 'mp4';
 const FORCE_VIDEO_CODEC = 'h264';
 const JOB_RETENTION_MS = 10 * 60 * 1000;
+const DEFAULT_THUMBNAIL_TIMEOUT_MS = 20000;
+const DEFAULT_THUMBNAIL_RETRIES = 2;
+const MAX_THUMBNAIL_REDIRECTS = 5;
 
 function createDownloader(runtime) {
     const jobs = new Map();
@@ -13,6 +17,7 @@ function createDownloader(runtime) {
     return {
         parseVideo: (url) => parseVideo(url, runtime),
         ensureDownload: (query) => ensureDownload(query, runtime, jobs),
+        ensureCoverDownload: (query) => ensureCoverDownload(query, runtime, jobs),
         refreshCookies: () => refreshCookies(runtime)
     };
 }
@@ -114,10 +119,50 @@ function ensureDownload(query, runtime, jobs) {
     return jobs.get(key);
 }
 
+function ensureCoverDownload(query, runtime, jobs) {
+    const context = validateCoverDownloadContext(query);
+    const key = JSON.stringify({ type: 'cover', ...context });
+    if (!jobs.has(key)) {
+        jobs.set(key, {
+            success: true,
+            result: {
+                title: context.title,
+                phase: 'downloading-cover',
+                downloading: true,
+                downloadSucceed: false,
+                dest: '正在下载封面'
+            }
+        });
+
+        executeCoverDownload(context, runtime)
+            .then((result) => {
+                jobs.set(key, { success: true, result });
+                scheduleJobCleanup(jobs, key);
+            })
+            .catch((error) => {
+                jobs.set(key, {
+                    success: true,
+                    result: {
+                        title: context.title,
+                        phase: 'failed',
+                        downloading: false,
+                        downloadSucceed: false,
+                        dest: '下载封面失败',
+                        error: safeError(error)
+                    }
+                });
+                scheduleJobCleanup(jobs, key);
+            });
+    }
+
+    return jobs.get(key);
+}
+
 async function executeDownload(context, runtime) {
     const { website, videoID, title, p, format, transcode, sourceUrl } = context;
     const fileBase = buildVideoFileBase(title, videoID, p);
     const downloadDir = buildVideoDir(runtime.tmpDir, title, videoID);
+    assertPathInsideRoot(runtime.tmpDir, downloadDir);
     mkdirSync(downloadDir, { recursive: true });
 
     const url = buildWebsiteUrl(website, videoID, p, sourceUrl);
@@ -153,8 +198,17 @@ async function executeDownload(context, runtime) {
     }
 
     const mediaInfo = detectMediaStream(join(downloadDir, destFile), runtime.ffmpegPath);
-    const relativeFolder = toUrlPath(buildVideoFolderName(title, videoID));
+    const relativeFolder = toPublicPath(buildVideoFolderName(title, videoID));
     const metadataFile = findInfoFile(downloadDir, fileBase);
+    if (metadataFile) {
+        const metadataPath = join(downloadDir, metadataFile);
+        const formatResult = prettyPrintJsonFile(metadataPath);
+        if (!formatResult.ok) {
+            console.warn(`[metadata] pretty-print failed: ${metadataPath} :: ${formatResult.error}`);
+        }
+    }
+
+    const openFolder = await openFolderInBackground(downloadDir);
 
     return {
         title,
@@ -164,10 +218,86 @@ async function executeDownload(context, runtime) {
         downloading: false,
         downloadSucceed: true,
         folder: `file/${relativeFolder}`,
-        dest: `file/${relativeFolder}/${destFile}`,
-        video: mediaInfo.hasVideo ? `file/${relativeFolder}/${destFile}` : null,
-        audio: mediaInfo.hasAudio && !mediaInfo.hasVideo ? `file/${relativeFolder}/${destFile}` : null,
-        metadata: metadataFile ? `file/${relativeFolder}/${metadataFile}` : null
+        dest: `file/${relativeFolder}/${encodeURIComponent(destFile)}`,
+        video: mediaInfo.hasVideo ? `file/${relativeFolder}/${encodeURIComponent(destFile)}` : null,
+        audio: mediaInfo.hasAudio && !mediaInfo.hasVideo ? `file/${relativeFolder}/${encodeURIComponent(destFile)}` : null,
+        metadata: metadataFile ? `file/${relativeFolder}/${encodeURIComponent(metadataFile)}` : null,
+        openFolder
+    };
+}
+
+async function executeCoverDownload(context, runtime) {
+    const { website, videoID, title, p, thumbnailUrl } = context;
+    const downloadDir = buildVideoDir(runtime.tmpDir, title, videoID);
+    assertPathInsideRoot(runtime.tmpDir, downloadDir);
+    mkdirSync(downloadDir, { recursive: true });
+
+    const fileBase = buildVideoFileBase(title, videoID, p);
+    const coverUrls = resolveCoverUrls(website, videoID, thumbnailUrl);
+    if (!coverUrls.length) {
+        throw new Error('未找到可用封面地址');
+    }
+
+    let coverFileName = '';
+    let lastError = null;
+    const diagnostics = [];
+    let finalUrl = '';
+    let downloader = '';
+    const timeoutMs = resolveThumbnailTimeout(runtime.config);
+    const retryCount = resolveThumbnailRetryCount(runtime.config);
+    for (const coverUrl of coverUrls) {
+        const extension = resolveCoverExtension(coverUrl);
+        coverFileName = `${fileBase}-cover${extension}`;
+        const coverPath = join(downloadDir, coverFileName);
+        assertPathInsideRoot(runtime.tmpDir, coverPath);
+        try {
+            const downloadResult = await downloadFileWithRetry(coverUrl, coverPath, {
+                timeoutMs,
+                retryCount,
+                maxRedirects: MAX_THUMBNAIL_REDIRECTS
+            });
+            diagnostics.push(...downloadResult.attempts);
+            finalUrl = downloadResult.finalUrl || coverUrl;
+            downloader = downloadResult.method || '';
+            lastError = null;
+            break;
+        } catch (error) {
+            if (Array.isArray(error?.details?.attempts)) {
+                diagnostics.push(...error.details.attempts);
+            }
+            lastError = error;
+            cleanupFile(coverPath);
+        }
+    }
+
+    if (lastError) {
+        lastError.details = {
+            ...(lastError.details || {}),
+            cover: {
+                candidates: coverUrls,
+                finalUrl,
+                downloader,
+                attempts: diagnostics
+            }
+        };
+        throw lastError;
+    }
+
+    const relativeFolder = toPublicPath(buildVideoFolderName(title, videoID));
+    return {
+        title,
+        phase: 'completed',
+        downloading: false,
+        downloadSucceed: true,
+        folder: `file/${relativeFolder}`,
+        dest: `file/${relativeFolder}/${encodeURIComponent(coverFileName)}`,
+        cover: `file/${relativeFolder}/${encodeURIComponent(coverFileName)}`,
+        coverDiagnostics: {
+            candidates: coverUrls,
+            finalUrl,
+            downloader,
+            attempts: diagnostics
+        }
     };
 }
 
@@ -178,6 +308,26 @@ async function refreshCookies(runtime) {
     for (const attempt of buildCookieRefreshAttempts(runtime.config)) {
         restoreCookieFile(runtime.cookiePath, original);
         const browserSpec = buildCookiesFromBrowserSpec(attempt.browser, attempt.profile, attempt.profilePath);
+        const cookieDatabase = resolveCookieDatabasePath(attempt);
+        const diagnostics = {
+            browser: attempt.browser,
+            profile: attempt.profile,
+            profilePath: attempt.profilePath,
+            browserSpec,
+            cookieDatabase,
+            cookieDatabaseExists: cookieDatabase ? existsSync(cookieDatabase) : false,
+            status: 'pending',
+            recommendation: ''
+        };
+
+        if (!diagnostics.cookieDatabaseExists) {
+            attempts.push({
+                ...diagnostics,
+                status: 'missing_database',
+                recommendation: '请确认浏览器 profile 是否存在，并检查该 profile 下是否有 Cookies 数据库。'
+            });
+            continue;
+        }
 
         try {
             await runProcess(runtime.ytDlpPath, [
@@ -191,18 +341,47 @@ async function refreshCookies(runtime) {
             if (hasUsableCookie(runtime.cookiePath)) {
                 return {
                     browser: attempt.browser,
-                    message: `已更新 Cookie：${runtime.cookiePath}`
+                    profile: attempt.profile,
+                    message: buildCookieRefreshSuccessMessage(runtime.cookiePath, attempt),
+                    diagnostics: {
+                        succeeded: true,
+                        attempts: [
+                            ...attempts,
+                            {
+                                ...diagnostics,
+                                status: 'success'
+                            }
+                        ]
+                    }
                 };
             }
 
-            attempts.push(`${browserSpec}: 未生成可用 Cookie`);
+            attempts.push({
+                ...diagnostics,
+                status: 'no_usable_cookie',
+                recommendation: 'yt-dlp 已执行，但未产出可用 cookies。建议改用可工作的 cookies.txt 或手动导出路径。'
+            });
         } catch (error) {
-            attempts.push(`${browserSpec}: ${safeError(error)}`);
+            attempts.push({
+                ...diagnostics,
+                status: classifyCookieRefreshStatus(error),
+                error: safeError(error),
+                recommendation: buildCookieRefreshRecommendation(error)
+            });
         }
     }
 
     restoreCookieFile(runtime.cookiePath, original);
-    throw new Error(attempts.join('\n') || '自动获取 Cookie 失败');
+    const summary = attempts.map((attempt) => `${attempt.browserSpec}: ${attempt.error || attempt.status}`).join('\n');
+    const error = new Error(summary || '自动获取 Cookie 失败');
+    error.details = {
+        succeeded: false,
+        attempts,
+        fallback: {
+            message: '自动提取 Cookie 在当前 Windows/浏览器环境下并不总能可靠成功。建议保留手动 cookies.txt 导入或外部导出方案。'
+        }
+    };
+    throw error;
 }
 
 function buildCookieRefreshAttempts(config) {
@@ -225,10 +404,131 @@ function buildCookieRefreshAttempts(config) {
     };
 
     add(config.cookieAutoBrowser, config.cookieAutoProfile, config.cookieAutoProfilePath);
+    for (const discovered of discoverCookieRefreshAttempts(config)) {
+        add(discovered.browser, discovered.profile, discovered.profilePath);
+    }
     add('edge', 'Default', '');
     add('chrome', 'Default', '');
     add('firefox', 'default-release', '');
     return attempts;
+}
+
+function buildCookieRefreshSuccessMessage(cookiePath, attempt) {
+    const detail = attempt.profilePath
+        ? `${attempt.browser}:${attempt.profilePath}`
+        : `${attempt.browser}:${attempt.profile}`;
+    return `已更新 Cookie：${cookiePath}（来源 ${detail}）`;
+}
+
+function discoverCookieRefreshAttempts(config) {
+    const browser = normalizeBrowserName(config?.cookieAutoBrowser);
+    if (browser) {
+        return discoverBrowserProfiles(browser);
+    }
+
+    return [
+        ...discoverBrowserProfiles('edge'),
+        ...discoverBrowserProfiles('chrome'),
+        ...discoverBrowserProfiles('firefox')
+    ];
+}
+
+function discoverBrowserProfiles(browser) {
+    if (browser === 'edge' || browser === 'chrome') {
+        return discoverChromiumProfiles(browser);
+    }
+    if (browser === 'firefox') {
+        return discoverFirefoxProfiles();
+    }
+    return [];
+}
+
+function discoverChromiumProfiles(browser) {
+    const userDataDir = resolveChromiumUserDataDir(browser);
+    if (!userDataDir || !existsSync(userDataDir)) {
+        return [];
+    }
+
+    const profiles = [];
+    const knownProfiles = listDirectoryNames(userDataDir)
+        .filter((name) => /^Default$/i.test(name) || /^Profile \d+$/i.test(name) || /^Guest Profile$/i.test(name));
+
+    const localStateProfiles = readChromiumProfilesFromLocalState(userDataDir);
+    for (const profile of [...localStateProfiles, ...knownProfiles]) {
+        const profileDir = join(userDataDir, profile);
+        if (!existsSync(join(profileDir, 'Network', 'Cookies')) && !existsSync(join(profileDir, 'Cookies'))) {
+            continue;
+        }
+        profiles.push({
+            browser,
+            profile,
+            profilePath: ''
+        });
+    }
+
+    return profiles;
+}
+
+function resolveChromiumUserDataDir(browser) {
+    const localAppData = String(process.env.LOCALAPPDATA || '').trim();
+    if (!localAppData) return '';
+    if (browser === 'edge') {
+        return join(localAppData, 'Microsoft', 'Edge', 'User Data');
+    }
+    if (browser === 'chrome') {
+        return join(localAppData, 'Google', 'Chrome', 'User Data');
+    }
+    return '';
+}
+
+function readChromiumProfilesFromLocalState(userDataDir) {
+    const localStatePath = join(userDataDir, 'Local State');
+    if (!existsSync(localStatePath)) {
+        return [];
+    }
+
+    try {
+        const localState = JSON.parse(readFileSync(localStatePath, 'utf8'));
+        const entries = localState?.profile?.info_cache;
+        if (!entries || typeof entries !== 'object') {
+            return [];
+        }
+        return Object.keys(entries);
+    } catch (error) {
+        return [];
+    }
+}
+
+function discoverFirefoxProfiles() {
+    const appData = String(process.env.APPDATA || '').trim();
+    if (!appData) return [];
+    const profilesRoot = join(appData, 'Mozilla', 'Firefox', 'Profiles');
+    if (!existsSync(profilesRoot)) {
+        return [];
+    }
+
+    return listDirectoryNames(profilesRoot)
+        .filter((name) => existsSync(join(profilesRoot, name, 'cookies.sqlite')))
+        .map((name) => ({
+            browser: 'firefox',
+            profile: name,
+            profilePath: ''
+        }));
+}
+
+function listDirectoryNames(dirPath) {
+    try {
+        return readdirSync(dirPath)
+            .filter((name) => {
+                try {
+                    return statSync(join(dirPath, name)).isDirectory();
+                } catch (error) {
+                    return false;
+                }
+            });
+    } catch (error) {
+        return [];
+    }
 }
 
 function normalizeBrowserName(browser) {
@@ -240,9 +540,58 @@ function normalizeBrowserName(browser) {
 
 function buildCookiesFromBrowserSpec(browser, profile, profilePath) {
     const parts = [String(browser || '').trim()];
-    if (profilePath) parts.push(`profile=${profilePath}`);
-    else if (profile) parts.push(`profile=${profile}`);
+    const normalizedProfilePath = String(profilePath || '').trim();
+    const normalizedProfile = String(profile || '').trim();
+    if (normalizedProfilePath) parts.push(resolve(normalizedProfilePath));
+    else if (normalizedProfile) parts.push(normalizedProfile);
     return parts.join(':');
+}
+
+function resolveCookieDatabasePath(attempt) {
+    if (!attempt || !attempt.browser) return '';
+    if (attempt.browser === 'edge' || attempt.browser === 'chrome') {
+        const userDataDir = resolveChromiumUserDataDir(attempt.browser);
+        if (!userDataDir) return '';
+        const profileName = String(attempt.profilePath || attempt.profile || 'Default').trim();
+        const profileDir = join(userDataDir, profileName);
+        const networkPath = join(profileDir, 'Network', 'Cookies');
+        if (existsSync(networkPath)) return networkPath;
+        return join(profileDir, 'Cookies');
+    }
+    if (attempt.browser === 'firefox') {
+        const appData = String(process.env.APPDATA || '').trim();
+        if (!appData) return '';
+        return join(appData, 'Mozilla', 'Firefox', 'Profiles', attempt.profile || 'default-release', 'cookies.sqlite');
+    }
+    return '';
+}
+
+function classifyCookieRefreshStatus(error) {
+    const message = safeError(error).toLowerCase();
+    if (message.includes('could not find') && message.includes('cookies database')) {
+        return 'missing_database';
+    }
+    if (message.includes('could not copy chrome cookie database')) {
+        return 'copy_database_failed';
+    }
+    if (message.includes('failed to decrypt with dpapi')) {
+        return 'dpapi_failed';
+    }
+    return 'command_failed';
+}
+
+function buildCookieRefreshRecommendation(error) {
+    const status = classifyCookieRefreshStatus(error);
+    if (status === 'missing_database') {
+        return '该 profile 下未找到 Cookies 数据库，建议重新选择存在的 profile，或改用手动 cookies.txt。';
+    }
+    if (status === 'copy_database_failed') {
+        return '这通常与浏览器占用或 yt-dlp 复制数据库失败有关。请先完全关闭浏览器后重试，若仍失败请改用手动 cookies.txt。';
+    }
+    if (status === 'dpapi_failed') {
+        return '这通常是 Windows/Chromium 解密限制。建议改用手动 cookies.txt 或外部导出工具，而不是继续依赖自动提取。';
+    }
+    return '自动提取失败，建议查看详细诊断并准备手动 cookies.txt 作为备用方案。';
 }
 
 function restoreCookieFile(cookiePath, previous) {
@@ -259,7 +608,7 @@ function hasUsableCookie(cookiePath) {
 function validateDownloadContext(query) {
     const website = String(query.website || '').trim();
     const videoID = String(query.v || '').trim();
-    const p = String(query.p || '').trim();
+    const p = normalizePartParam(query.p);
     const format = String(query.format || '').trim();
     const sourceUrl = String(query.source || '').trim();
     const title = String(query.title || '').trim() || videoID;
@@ -289,8 +638,71 @@ function validateDownloadContext(query) {
     };
 }
 
+function validateCoverDownloadContext(query) {
+    const website = String(query.website || '').trim();
+    const videoID = String(query.v || '').trim();
+    const p = normalizePartParam(query.p);
+    const sourceUrl = String(query.source || '').trim();
+    const thumbnailUrl = String(query.thumbnail || '').trim();
+    const title = String(query.title || '').trim() || videoID;
+
+    if (!isSupportedWebsite(website)) {
+        throw new Error('无效网站参数');
+    }
+    if (!isValidVideoID(website, videoID)) {
+        throw new Error('无效视频ID');
+    }
+
+    return {
+        website,
+        videoID,
+        p: p || null,
+        sourceUrl: isValidWebsiteSourceUrl(website, sourceUrl) ? sourceUrl : '',
+        thumbnailUrl: isAllowedThumbnailUrl(thumbnailUrl) ? thumbnailUrl : '',
+        title
+    };
+}
+
 function isSafeFormatSelector(format) {
     return /^[A-Za-z0-9][A-Za-z0-9._-]*(?:x[A-Za-z0-9][A-Za-z0-9._-]*)?$/.test(String(format || '').trim());
+}
+
+function normalizePartParam(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (!/^\d+$/.test(text)) {
+        throw new Error('分P参数无效');
+    }
+    return text;
+}
+
+function isValidHttpUrl(url) {
+    try {
+        const parsed = new URL(String(url || '').trim());
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch (error) {
+        return false;
+    }
+}
+
+function isAllowedThumbnailUrl(url) {
+    if (!isValidHttpUrl(url)) return false;
+    try {
+        const parsed = new URL(String(url || '').trim());
+        const host = parsed.hostname.toLowerCase();
+        return host === '127.0.0.1'
+            || host === 'localhost'
+            || host === 'ytimg.com'
+            || host.endsWith('.ytimg.com')
+            || host === 'ggpht.com'
+            || host.endsWith('.ggpht.com')
+            || host === 'biliimg.com'
+            || host.endsWith('.biliimg.com')
+            || host === 'hdslb.com'
+            || host.endsWith('.hdslb.com');
+    } catch (error) {
+        return false;
+    }
 }
 
 function parseFormats(formats) {
@@ -545,8 +957,356 @@ function findInfoFile(dir, fileBase) {
     return readdirSync(dir).find((name) => name.startsWith(`${fileBase}.`) && name.endsWith('.info.json')) || '';
 }
 
+function prettyPrintJsonFile(filePath) {
+    try {
+        const raw = readFileSync(filePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        const formatted = `${JSON.stringify(parsed, null, 2)}\n`;
+        if (raw !== formatted) {
+            writeFileSync(filePath, formatted, 'utf8');
+        }
+        return { ok: true };
+    } catch (error) {
+        return { ok: false, error: safeError(error) };
+    }
+}
+
 function ensureParentDir(filePath) {
-    mkdirSync(join(filePath, '..'), { recursive: true });
+    mkdirSync(dirname(filePath), { recursive: true });
+}
+
+function resolveCoverUrls(website, videoID, thumbnailUrl) {
+    const candidates = [];
+    if (website === 'y2b') {
+        candidates.push(
+            `https://i.ytimg.com/vi/${videoID}/maxresdefault.jpg`,
+            `https://i.ytimg.com/vi/${videoID}/sddefault.jpg`,
+            `https://i.ytimg.com/vi/${videoID}/hq720.jpg`,
+            `https://i.ytimg.com/vi/${videoID}/hqdefault.jpg`,
+            `https://i.ytimg.com/vi/${videoID}/mqdefault.jpg`,
+            `https://i.ytimg.com/vi/${videoID}/default.jpg`
+        );
+    }
+
+    const directThumbnail = String(thumbnailUrl || '').trim();
+    if (directThumbnail && !candidates.includes(directThumbnail)) {
+        candidates.push(directThumbnail);
+    }
+
+    return candidates.filter((url) => isAllowedThumbnailUrl(url));
+}
+
+function resolveCoverExtension(url) {
+    const pathname = String(url || '').split('?')[0].split('#')[0];
+    const ext = extname(pathname).toLowerCase();
+    return ext && /^[.][a-z0-9]{2,5}$/.test(ext) ? ext : '.jpg';
+}
+
+function resolveThumbnailTimeout(config) {
+    const configured = Number(config?.thumbnailTimeout);
+    if (Number.isFinite(configured) && configured > 0) {
+        return configured;
+    }
+
+    const parseTimeout = Number(config?.taskTimeout?.parse);
+    if (Number.isFinite(parseTimeout) && parseTimeout > 0) {
+        return Math.min(parseTimeout, DEFAULT_THUMBNAIL_TIMEOUT_MS);
+    }
+
+    return DEFAULT_THUMBNAIL_TIMEOUT_MS;
+}
+
+function resolveThumbnailRetryCount(config) {
+    const configured = Number(config?.thumbnailRetryCount);
+    if (Number.isInteger(configured) && configured >= 0) {
+        return configured;
+    }
+    return DEFAULT_THUMBNAIL_RETRIES;
+}
+
+async function downloadFileWithRetry(url, destination, options = {}) {
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_THUMBNAIL_TIMEOUT_MS;
+    const retryCount = Number.isInteger(options.retryCount) && options.retryCount >= 0 ? options.retryCount : DEFAULT_THUMBNAIL_RETRIES;
+    const maxRedirects = Number.isInteger(options.maxRedirects) && options.maxRedirects >= 0 ? options.maxRedirects : MAX_THUMBNAIL_REDIRECTS;
+    const attempts = [];
+
+    for (let attempt = 1; attempt <= retryCount + 1; attempt += 1) {
+        const startedAt = Date.now();
+        try {
+            const result = await downloadFile(url, destination, { timeoutMs, maxRedirects });
+            attempts.push({
+                method: 'node-http',
+                url,
+                attempt,
+                timeoutMs,
+                durationMs: Date.now() - startedAt,
+                success: true,
+                finalUrl: result.finalUrl || url,
+                statusCode: result.statusCode || 200
+            });
+            return {
+                method: 'node-http',
+                finalUrl: result.finalUrl || url,
+                attempts
+            };
+        } catch (error) {
+            attempts.push({
+                method: 'node-http',
+                url,
+                attempt,
+                timeoutMs,
+                durationMs: Date.now() - startedAt,
+                success: false,
+                error: safeError(error)
+            });
+            cleanupFile(destination);
+            if (attempt <= retryCount) {
+                await delay(Math.min(1000 * attempt, 3000));
+            }
+        }
+    }
+
+    if (process.platform === 'win32') {
+        const startedAt = Date.now();
+        try {
+            await downloadFileWithPowerShell(url, destination, timeoutMs);
+            attempts.push({
+                method: 'powershell-invoke-webrequest',
+                url,
+                attempt: 1,
+                timeoutMs,
+                durationMs: Date.now() - startedAt,
+                success: true,
+                finalUrl: url,
+                statusCode: 200
+            });
+            return {
+                method: 'powershell-invoke-webrequest',
+                finalUrl: url,
+                attempts
+            };
+        } catch (error) {
+            cleanupFile(destination);
+            attempts.push({
+                method: 'powershell-invoke-webrequest',
+                url,
+                attempt: 1,
+                timeoutMs,
+                durationMs: Date.now() - startedAt,
+                success: false,
+                error: safeError(error)
+            });
+        }
+    }
+
+    const error = new Error(`下载封面失败：${attempts[attempts.length - 1]?.error || '未知错误'}`);
+    error.details = { attempts };
+    throw error;
+}
+
+function downloadFile(url, destination, options = {}, redirectDepth = 0) {
+    return new Promise((resolve, reject) => {
+        ensureParentDir(destination);
+        const client = selectHttpClient(url);
+        const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_THUMBNAIL_TIMEOUT_MS;
+        const maxRedirects = Number.isInteger(options.maxRedirects) && options.maxRedirects >= 0 ? options.maxRedirects : MAX_THUMBNAIL_REDIRECTS;
+        const request = client.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+        }, (response) => {
+            if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                response.resume();
+                if (redirectDepth >= maxRedirects) {
+                    reject(new Error('封面重定向次数过多'));
+                    return;
+                }
+                const redirectedUrl = new URL(response.headers.location, url).toString();
+                if (!isAllowedThumbnailUrl(redirectedUrl)) {
+                    reject(new Error('封面重定向地址不被允许'));
+                    return;
+                }
+                downloadFile(redirectedUrl, destination, { timeoutMs, maxRedirects }, redirectDepth + 1).then(resolve, reject);
+                return;
+            }
+
+            if (response.statusCode !== 200) {
+                response.resume();
+                reject(new Error(`下载封面失败，状态码: ${response.statusCode}`));
+                return;
+            }
+
+            const file = createWriteStream(destination);
+            file.on('finish', () => file.close(() => resolve({ statusCode: response.statusCode, finalUrl: url })));
+            file.on('error', (error) => file.close(() => reject(error)));
+            response.on('error', (error) => file.close(() => reject(error)));
+            response.pipe(file);
+        });
+
+        request.setTimeout(timeoutMs, () => request.destroy(new Error(`下载封面超时（${timeoutMs}ms）`)));
+        request.on('error', reject);
+    });
+}
+
+function openFolderInBackground(folderPath) {
+    return new Promise((resolve) => {
+        const targetPath = String(folderPath || '').trim();
+        if (!targetPath) {
+            resolve({ attempted: false, launched: false, message: '未提供可打开的目录路径', attempts: [] });
+            return;
+        }
+        if (!existsSync(targetPath)) {
+            resolve({ attempted: false, launched: false, message: `目录不存在，未执行自动打开：${targetPath}`, attempts: [] });
+            return;
+        }
+
+        attemptOpenFolder(targetPath)
+            .then(resolve)
+            .catch((error) => resolve({
+                attempted: true,
+                launched: false,
+                message: `已尝试自动打开目录，但所有策略都失败：${safeError(error)}`,
+                attempts: error?.details?.attempts || []
+            }));
+    });
+}
+
+function cleanupFile(filePath) {
+    try {
+        if (filePath && existsSync(filePath)) {
+            unlinkSync(filePath);
+        }
+    } catch (error) {
+        console.warn(`清理文件失败: ${safeError(error)}`);
+    }
+}
+
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function selectHttpClient(url) {
+    return String(url || '').trim().toLowerCase().startsWith('http://') ? http : https;
+}
+
+async function attemptOpenFolder(targetPath) {
+    const attempts = [];
+    const strategies = [
+        {
+            name: 'cmd-start',
+            run: () => spawnDetachedSuccess('cmd', ['/c', 'start', '', targetPath])
+        },
+        {
+            name: 'explorer-execFile',
+            run: () => execFileSuccess('explorer.exe', [targetPath])
+        },
+        {
+            name: 'powershell-start-process',
+            run: () => execFileSuccess('powershell.exe', [
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                `Start-Process explorer.exe -ArgumentList '${escapePowerShellSingleQuoted(targetPath)}'`
+            ])
+        }
+    ];
+
+    for (const strategy of strategies) {
+        const startedAt = Date.now();
+        try {
+            const result = await strategy.run();
+            attempts.push({
+                strategy: strategy.name,
+                success: true,
+                durationMs: Date.now() - startedAt,
+                ...result
+            });
+            return {
+                attempted: true,
+                launched: true,
+                visibleUnknown: true,
+                strategy: strategy.name,
+                attempts,
+                message: `已尝试使用 ${strategy.name} 自动打开下载目录；若未看到新窗口，可能被现有资源管理器窗口复用或未切到前台`
+            };
+        } catch (error) {
+            attempts.push({
+                strategy: strategy.name,
+                success: false,
+                durationMs: Date.now() - startedAt,
+                error: safeError(error)
+            });
+            console.warn(`自动打开目录失败 [${strategy.name}]: ${targetPath} - ${safeError(error)}`);
+        }
+    }
+
+    const error = new Error('所有自动打开目录策略都失败');
+    error.details = { attempts };
+    throw error;
+}
+
+function execFileSuccess(command, args) {
+    return new Promise((resolve, reject) => {
+        execFile(command, args, { windowsHide: true }, (error, stdout, stderr) => {
+            if (error) {
+                reject(error);
+                return;
+            }
+            resolve({
+                stdout: String(stdout || ''),
+                stderr: String(stderr || '')
+            });
+        });
+    });
+}
+
+function spawnDetachedSuccess(command, args) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (handler, payload) => {
+            if (settled) return;
+            settled = true;
+            handler(payload);
+        };
+
+        try {
+            const child = spawn(command, args, {
+                windowsHide: true,
+                stdio: 'ignore'
+            });
+            child.on('error', (error) => finish(reject, error));
+            child.on('exit', (code) => {
+                if (code !== 0) {
+                    finish(reject, new Error(`exit code ${code}`));
+                }
+            });
+            child.on('spawn', () => {
+                child.unref();
+                setTimeout(() => finish(resolve, { exitCode: 0 }), 300);
+            });
+        } catch (error) {
+            finish(reject, error);
+        }
+    });
+}
+
+async function downloadFileWithPowerShell(url, destination, timeoutMs) {
+    ensureParentDir(destination);
+    const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+    await runProcess('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '${escapePowerShellSingleQuoted(url)}' -OutFile '${escapePowerShellSingleQuoted(destination)}' -UserAgent 'Mozilla/5.0' -TimeoutSec ${timeoutSec}`
+    ], timeoutMs + 5000);
+}
+
+function assertPathInsideRoot(rootDir, targetPath) {
+    const path = require('path');
+    const normalizedRoot = path.resolve(rootDir);
+    const normalizedTarget = path.resolve(targetPath);
+    const relative = path.relative(normalizedRoot, normalizedTarget);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('输出路径超出允许目录');
+    }
 }
 
 function scheduleJobCleanup(jobs, key) {
@@ -683,6 +1443,10 @@ function safeDecodeURIComponent(text) {
     }
 }
 
+function escapePowerShellSingleQuoted(text) {
+    return String(text || '').replace(/'/g, "''");
+}
+
 function safeError(error) {
     if (!error) return 'unknown error';
     if (typeof error === 'string') return error;
@@ -702,8 +1466,13 @@ function buildSiteAwareError(website, error, stage) {
     return `${base}（Bilibili ${stageText}可能需要有效 cookies.txt 或更高账号权限）`;
 }
 
-function toUrlPath(pathText) {
-    return String(pathText || '').replace(/\\/g, '/');
+function toPublicPath(pathText) {
+    return String(pathText || '')
+        .split('\\')
+        .join('/')
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/');
 }
 
 module.exports = {
