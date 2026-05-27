@@ -94,7 +94,9 @@ function ensureDownload(query, runtime, jobs) {
             }
         });
 
-        executeDownload(context, runtime)
+        executeDownload(context, runtime, (result) => {
+            jobs.set(key, { success: true, result });
+        })
             .then((result) => {
                 jobs.set(key, { success: true, result });
                 scheduleJobCleanup(jobs, key);
@@ -158,7 +160,7 @@ function ensureCoverDownload(query, runtime, jobs) {
     return jobs.get(key);
 }
 
-async function executeDownload(context, runtime) {
+async function executeDownload(context, runtime, onProgress = () => {}) {
     const { website, videoID, title, p, format, transcode, sourceUrl } = context;
     const fileBase = buildVideoFileBase(title, videoID, p);
     const downloadDir = buildVideoDir(runtime.tmpDir, title, videoID);
@@ -179,13 +181,22 @@ async function executeDownload(context, runtime) {
         '--ffmpeg-location', runtime.ffmpegPath
     ], runtime.config.taskTimeout.download, website);
 
-    const sourceFile = findPrimaryOutputFile(downloadDir, fileBase);
+    const sourceFile = findPrimaryOutputFile(downloadDir, fileBase, runtime.ffmpegPath);
     if (!sourceFile) {
         throw new Error('下载完成但未找到输出文件');
     }
 
     let destFile = sourceFile;
     if (transcode) {
+        onProgress({
+            title,
+            format,
+            transcode,
+            phase: 'transcoding',
+            downloading: true,
+            downloadSucceed: false,
+            dest: '原始音视频下载完成，正在转码…'
+        });
         const transcodedName = `${fileBase}-h264.${FORCE_RECODE_FORMAT}`;
         await runProcess(runtime.ffmpegPath, [
             '-y',
@@ -626,6 +637,9 @@ function validateDownloadContext(query) {
     if (!isSafeFormatSelector(format)) {
         throw new Error('格式参数无效');
     }
+    if (transcode && !isCombinedFormatSelector(format)) {
+        throw new Error('转码需要同时选择视频和音频格式');
+    }
 
     return {
         website,
@@ -665,6 +679,10 @@ function validateCoverDownloadContext(query) {
 
 function isSafeFormatSelector(format) {
     return /^[A-Za-z0-9][A-Za-z0-9._-]*(?:x[A-Za-z0-9][A-Za-z0-9._-]*)?$/.test(String(format || '').trim());
+}
+
+function isCombinedFormatSelector(format) {
+    return String(format || '').includes('x');
 }
 
 function normalizePartParam(value) {
@@ -936,7 +954,7 @@ function sanitizePathSegment(text, fallback = 'video') {
     return cleaned.slice(0, 120);
 }
 
-function findPrimaryOutputFile(dir, fileBase) {
+function findPrimaryOutputFile(dir, fileBase, ffmpegPath) {
     if (!existsSync(dir)) return '';
 
     const prefix = `${fileBase}.`;
@@ -946,10 +964,29 @@ function findPrimaryOutputFile(dir, fileBase) {
         .filter((name) => statSync(join(dir, name)).isFile())
         .filter((name) => !name.endsWith('.info.json'))
         .filter((name) => !ignored.has(extname(name).toLowerCase()))
-        .map((name) => ({ name, stat: statSync(join(dir, name)) }))
-        .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs || b.stat.size - a.stat.size);
+        .map((name) => {
+            const filePath = join(dir, name);
+            const stat = statSync(filePath);
+            const mediaInfo = ffmpegPath ? detectMediaStream(filePath, ffmpegPath) : { hasVideo: false, hasAudio: false };
+            return {
+                name,
+                stat,
+                mediaInfo,
+                score: buildPrimaryOutputScore(name, mediaInfo)
+            };
+        })
+        .sort((a, b) => b.score - a.score || b.stat.mtimeMs - a.stat.mtimeMs || b.stat.size - a.stat.size);
 
     return candidates[0]?.name || '';
+}
+
+function buildPrimaryOutputScore(name, mediaInfo) {
+    let score = 0;
+    if (mediaInfo.hasVideo) score += 100;
+    if (mediaInfo.hasAudio) score += 20;
+    if (!/\.f\w+\./i.test(name)) score += 10;
+    if (/\.mkv$/i.test(name) || /\.mp4$/i.test(name) || /\.webm$/i.test(name)) score += 5;
+    return score;
 }
 
 function findInfoFile(dir, fileBase) {
