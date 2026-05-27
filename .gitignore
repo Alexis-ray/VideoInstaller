@@ -2,11 +2,3 @@ node_modules/
 .runtime-tools/
 temp/
 cookies.txt
-logs/
-.sisyphus/
-*.log
-*.tmp
-*.temp
-.DS_Store
-Thumbs.db
-Desktop.ini
