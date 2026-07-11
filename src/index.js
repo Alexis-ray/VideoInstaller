@@ -11,9 +11,6 @@ const DEFAULT_CONFIG = {
     address: '127.0.0.1',
     tmpDir: 'temp',
     cookie: 'cookies.txt',
-    cookieAutoBrowser: 'edge',
-    cookieAutoProfile: 'Default',
-    cookieAutoProfilePath: '',
     proxy: '',
     thumbnailTimeout: 20000,
     thumbnailRetryCount: 2,
@@ -27,6 +24,8 @@ function start() {
     const runtime = loadConfig();
     const downloader = createDownloader(runtime);
     const app = express();
+
+    app.use(express.json({ limit: '3mb' }));
 
     app.use((req, res, next) => {
         console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
@@ -61,20 +60,28 @@ function start() {
         }
     });
 
-    app.post('/y2b/refresh-cookie', requireApiRequest, async (req, res) => {
+    app.post('/y2b/import-cookie', requireApiRequest, (req, res) => {
         try {
-            const result = await downloader.refreshCookies();
+            const result = downloader.importCookiesText(req.body?.cookies || '');
             res.send({ success: true, result });
         } catch (error) {
-            res.send({ success: false, error: error.message || '刷新 Cookie 失败', details: error.details || null });
+            res.send({ success: false, error: error.message || '导入 Cookie 失败' });
         }
     });
 
     app.listen(runtime.config.port, runtime.config.address, () => {
         const url = `http://${runtime.config.address}:${runtime.config.port}`;
         console.log(`服务已启动：${url}`);
+        console.log(`正在打开浏览器：${url}`);
         openBrowser(url);
     });
+}
+
+async function runCli(args) {
+    if (args.length) {
+        console.warn('已移除自动获取浏览器 Cookie 的命令；请启动网页后导入 Netscape cookies.txt。');
+    }
+    start();
 }
 
 function openBrowser(url) {
@@ -162,5 +169,8 @@ module.exports = {
 };
 
 if (require.main === module) {
-    start();
+    runCli(process.argv.slice(2)).catch((error) => {
+        console.error(error?.message || error);
+        process.exitCode = 1;
+    });
 }

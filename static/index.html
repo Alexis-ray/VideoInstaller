@@ -50,13 +50,40 @@
             align-items: center;
         }
 
-        input[type="url"], select {
+        input[type="url"], select, textarea {
             flex: 1 1 520px;
             min-height: 42px;
             padding: 0 12px;
             border: 1px solid var(--border);
             border-radius: 8px;
             font-size: 15px;
+        }
+
+        textarea {
+            min-height: 120px;
+            padding: 10px 12px;
+            font: 13px/1.5 Consolas, "Courier New", monospace;
+            resize: vertical;
+        }
+
+        .cookie-import {
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+        }
+
+        .cookie-import summary {
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .cookie-import .hint {
+            margin: 10px 0 12px;
+            line-height: 1.6;
+        }
+
+        .cookie-import input[type="file"] {
+            flex: 1 1 280px;
         }
 
         button {
@@ -170,8 +197,16 @@
             <form id="parseForm" class="row">
                 <input id="urlInput" type="url" placeholder="输入 YouTube 或 Bilibili 链接" autocomplete="off" required>
                 <button type="submit">解析</button>
-                <button id="refreshCookieBtn" type="button">刷新 Cookie</button>
             </form>
+            <details class="cookie-import">
+                <summary>导入 Edge 导出的 cookies.txt</summary>
+                <p class="hint muted">Edge/Chrome 的 Cookie 数据库可能被浏览器锁定，且新版 Chromium 存在 DPAPI/App-Bound 加密限制。本工具不再自动读取浏览器 Cookie；请从 Edge 导出 Netscape 格式 <code>cookies.txt</code> 后在这里导入。</p>
+                <div class="row">
+                    <input id="cookieFileInput" type="file" accept=".txt,text/plain">
+                    <button id="importCookieBtn" type="button">导入 Cookie</button>
+                </div>
+                <textarea id="cookieTextInput" placeholder="也可以直接粘贴 Netscape cookies.txt 内容"></textarea>
+            </details>
             <div id="parseStatus" class="status"></div>
         </div>
 
@@ -238,10 +273,14 @@
             pollTimer: null
         };
 
+        const maxCookieImportBytes = 2 * 1024 * 1024;
+
         const elements = {
             form: document.getElementById('parseForm'),
             urlInput: document.getElementById('urlInput'),
-            refreshCookieBtn: document.getElementById('refreshCookieBtn'),
+            cookieFileInput: document.getElementById('cookieFileInput'),
+            cookieTextInput: document.getElementById('cookieTextInput'),
+            importCookieBtn: document.getElementById('importCookieBtn'),
             parseStatus: document.getElementById('parseStatus'),
             resultPanel: document.getElementById('resultPanel'),
             thumbnail: document.getElementById('thumbnail'),
@@ -262,7 +301,8 @@
             await parseVideo();
         });
 
-        elements.refreshCookieBtn.addEventListener('click', refreshCookie);
+        elements.cookieFileInput.addEventListener('change', loadCookieFile);
+        elements.importCookieBtn.addEventListener('click', importCookie);
         elements.downloadCoverBtn.addEventListener('click', downloadCover);
         elements.downloadOriginalBtn.addEventListener('click', () => downloadSelected(false));
         elements.downloadTranscodeBtn.addEventListener('click', () => downloadSelected(true));
@@ -302,23 +342,44 @@
             }
         }
 
-        async function refreshCookie() {
-            elements.refreshCookieBtn.disabled = true;
-            setParseStatus('info', '正在刷新 Cookie，请稍候…');
+        async function loadCookieFile() {
+            const file = elements.cookieFileInput.files?.[0];
+            if (!file) return;
+            if (file.size > maxCookieImportBytes) {
+                elements.cookieFileInput.value = '';
+                elements.cookieTextInput.value = '';
+                setParseStatus('error', 'Cookie 文件过大，请只导出需要的网站 Cookie');
+                return;
+            }
+            elements.cookieTextInput.value = await file.text();
+            setParseStatus('info', `已读取 ${file.name}，确认后点击“导入 Cookie”`);
+        }
+
+        async function importCookie() {
+            const cookies = elements.cookieTextInput.value.trim();
+            if (!cookies) {
+                setParseStatus('error', '请先选择 cookies.txt 文件，或粘贴 cookies.txt 内容');
+                return;
+            }
+
+            elements.importCookieBtn.disabled = true;
+            setParseStatus('info', '正在导入 Cookie…');
 
             try {
-                const result = await requestJson('/y2b/refresh-cookie', {
-                    method: 'POST'
+                const result = await requestJson('/y2b/import-cookie', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ cookies })
                 });
                 if (!result.success) {
-                    setParseStatus('error', formatCookieRefreshFailure(result), true);
+                    setParseStatus('error', result.error || '导入 Cookie 失败');
                     return;
                 }
-                setParseStatus('success', result.result?.message || 'Cookie 已更新');
+                setParseStatus('success', result.result?.message || 'Cookie 已导入');
             } catch (error) {
-                setParseStatus('error', error.message || '刷新 Cookie 失败');
+                setParseStatus('error', error.message || '导入 Cookie 失败');
             } finally {
-                elements.refreshCookieBtn.disabled = false;
+                elements.importCookieBtn.disabled = false;
             }
         }
 
@@ -554,75 +615,6 @@
 
         function labelWebsite(website) {
             return website === 'b2b' ? 'Bilibili' : 'YouTube';
-        }
-
-        function formatCookieRefreshFailure(result) {
-            const details = result?.details || {};
-            const attempts = Array.isArray(details.attempts) ? details.attempts : [];
-            const lines = [
-                '<p><strong>自动刷新失败：当前环境下浏览器 Cookie 自动提取不可用。</strong></p>',
-                '<p>可改用 <code>cookies.txt</code>，或从浏览器导出 Cookie 后导入。</p>'
-            ];
-
-            if (attempts.length || details.fallback?.message || result?.error) {
-                lines.push('<details>');
-                lines.push('<summary>查看详细诊断</summary>');
-
-                if (attempts.length) {
-                    lines.push('<ul>');
-                    for (const attempt of attempts) {
-                        lines.push(`<li>${formatCookieRefreshAttemptSummary(attempt)}</li>`);
-                    }
-                    lines.push('</ul>');
-                }
-
-                lines.push(`<textarea readonly>${escapeHtml(formatCookieRefreshDiagnosticsText(result, details, attempts))}</textarea>`);
-                lines.push('</details>');
-            }
-
-            return lines.join('');
-        }
-
-        function formatCookieRefreshAttemptSummary(attempt) {
-            const source = `${attempt?.browserSpec || `${attempt?.browser || 'unknown'}:${attempt?.profile || ''}`}`;
-            return `<code>${escapeHtml(source)}</code> → <code>${escapeHtml(attempt?.status || 'unknown')}</code>`;
-        }
-
-        function formatCookieRefreshDiagnosticsText(result, details, attempts) {
-            const lines = [result?.error || '刷新 Cookie 失败'];
-
-            for (const attempt of attempts) {
-                lines.push(formatCookieRefreshAttempt(attempt));
-            }
-
-            if (details?.fallback?.message) {
-                lines.push(`Fallback: ${details.fallback.message}`);
-            }
-
-            return lines.join('\n\n');
-        }
-
-        function formatCookieRefreshAttempt(attempt) {
-            const source = `${attempt?.browserSpec || `${attempt?.browser || 'unknown'}:${attempt?.profile || ''}`}`;
-            const segments = [source];
-
-            if (attempt?.status) {
-                segments.push(`状态：${attempt.status}`);
-            }
-            if (attempt?.cookieDatabase) {
-                segments.push(`数据库：${attempt.cookieDatabase}`);
-            }
-            if (typeof attempt?.cookieDatabaseExists === 'boolean') {
-                segments.push(`DB存在：${attempt.cookieDatabaseExists ? '是' : '否'}`);
-            }
-            if (attempt?.error) {
-                segments.push(`错误：${attempt.error}`);
-            }
-            if (attempt?.recommendation) {
-                segments.push(`建议：${attempt.recommendation}`);
-            }
-
-            return segments.join('；');
         }
 
         function escapeHtml(text) {

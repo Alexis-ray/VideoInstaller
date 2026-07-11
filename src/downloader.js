@@ -1,5 +1,5 @@
 const { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, createWriteStream, unlinkSync } = require('fs');
-const { dirname, extname, join, resolve } = require('path');
+const { dirname, extname, join } = require('path');
 const { execFile, spawn, spawnSync } = require('child_process');
 const https = require('https');
 const http = require('http');
@@ -10,6 +10,7 @@ const JOB_RETENTION_MS = 10 * 60 * 1000;
 const DEFAULT_THUMBNAIL_TIMEOUT_MS = 20000;
 const DEFAULT_THUMBNAIL_RETRIES = 2;
 const MAX_THUMBNAIL_REDIRECTS = 5;
+const MAX_COOKIE_IMPORT_BYTES = 2 * 1024 * 1024;
 
 function createDownloader(runtime) {
     const jobs = new Map();
@@ -18,7 +19,7 @@ function createDownloader(runtime) {
         parseVideo: (url) => parseVideo(url, runtime),
         ensureDownload: (query) => ensureDownload(query, runtime, jobs),
         ensureCoverDownload: (query) => ensureCoverDownload(query, runtime, jobs),
-        refreshCookies: () => refreshCookies(runtime)
+        importCookiesText: (text) => importCookiesText(text, runtime)
     };
 }
 
@@ -37,6 +38,7 @@ async function parseVideo(rawInput, runtime) {
     const output = await runYtDlp(runtime, [
         '--print-json',
         '--skip-download',
+        '--ignore-no-formats-error',
         url
     ], runtime.config.taskTimeout.parse, parsedTarget.website);
 
@@ -312,308 +314,45 @@ async function executeCoverDownload(context, runtime) {
     };
 }
 
-async function refreshCookies(runtime) {
-    const original = existsSync(runtime.cookiePath) ? readFileSync(runtime.cookiePath) : null;
-    const attempts = [];
-
-    for (const attempt of buildCookieRefreshAttempts(runtime.config)) {
-        restoreCookieFile(runtime.cookiePath, original);
-        const browserSpec = buildCookiesFromBrowserSpec(attempt.browser, attempt.profile, attempt.profilePath);
-        const cookieDatabase = resolveCookieDatabasePath(attempt);
-        const diagnostics = {
-            browser: attempt.browser,
-            profile: attempt.profile,
-            profilePath: attempt.profilePath,
-            browserSpec,
-            cookieDatabase,
-            cookieDatabaseExists: cookieDatabase ? existsSync(cookieDatabase) : false,
-            status: 'pending',
-            recommendation: ''
-        };
-
-        if (!diagnostics.cookieDatabaseExists) {
-            attempts.push({
-                ...diagnostics,
-                status: 'missing_database',
-                recommendation: '请确认浏览器 profile 是否存在，并检查该 profile 下是否有 Cookies 数据库。'
-            });
-            continue;
-        }
-
-        try {
-            await runProcess(runtime.ytDlpPath, [
-                '--cookies-from-browser', browserSpec,
-                '--cookies', runtime.cookiePath,
-                '--skip-download',
-                '--no-warnings',
-                'https://www.youtube.com/watch?v=BaW_jenozKc'
-            ], runtime.config.taskTimeout.parse);
-
-            if (hasUsableCookie(runtime.cookiePath)) {
-                return {
-                    browser: attempt.browser,
-                    profile: attempt.profile,
-                    message: buildCookieRefreshSuccessMessage(runtime.cookiePath, attempt),
-                    diagnostics: {
-                        succeeded: true,
-                        attempts: [
-                            ...attempts,
-                            {
-                                ...diagnostics,
-                                status: 'success'
-                            }
-                        ]
-                    }
-                };
-            }
-
-            attempts.push({
-                ...diagnostics,
-                status: 'no_usable_cookie',
-                recommendation: 'yt-dlp 已执行，但未产出可用 cookies。建议改用可工作的 cookies.txt 或手动导出路径。'
-            });
-        } catch (error) {
-            attempts.push({
-                ...diagnostics,
-                status: classifyCookieRefreshStatus(error),
-                error: safeError(error),
-                recommendation: buildCookieRefreshRecommendation(error)
-            });
-        }
+function importCookiesText(rawText, runtime) {
+    const text = normalizeCookieImportText(rawText);
+    const cookieCount = countNetscapeCookieLines(text);
+    if (cookieCount === 0) {
+        throw new Error('未发现有效的 Netscape cookies.txt Cookie 行');
     }
 
-    restoreCookieFile(runtime.cookiePath, original);
-    const summary = attempts.map((attempt) => `${attempt.browserSpec}: ${attempt.error || attempt.status}`).join('\n');
-    const error = new Error(summary || '自动获取 Cookie 失败');
-    error.details = {
-        succeeded: false,
-        attempts,
-        fallback: {
-            message: '自动提取 Cookie 在当前 Windows/浏览器环境下并不总能可靠成功。建议保留手动 cookies.txt 导入或外部导出方案。'
-        }
+    ensureParentDir(runtime.cookiePath);
+    writeFileSync(runtime.cookiePath, text, 'utf8');
+    return {
+        message: `已导入 ${cookieCount} 条 Cookie：${runtime.cookiePath}`,
+        cookieCount,
+        cookiePath: runtime.cookiePath
     };
-    throw error;
 }
 
-function buildCookieRefreshAttempts(config) {
-    const attempts = [];
-    const seen = new Set();
-
-    const add = (browser, profile, profilePath) => {
-        const normalizedBrowser = normalizeBrowserName(browser);
-        if (!normalizedBrowser) return;
-        const normalizedProfile = String(profile || '').trim() || 'Default';
-        const normalizedProfilePath = String(profilePath || '').trim();
-        const key = [normalizedBrowser, normalizedProfile, normalizedProfilePath].join('|');
-        if (seen.has(key)) return;
-        seen.add(key);
-        attempts.push({
-            browser: normalizedBrowser,
-            profile: normalizedProfile,
-            profilePath: normalizedProfilePath
-        });
-    };
-
-    add(config.cookieAutoBrowser, config.cookieAutoProfile, config.cookieAutoProfilePath);
-    for (const discovered of discoverCookieRefreshAttempts(config)) {
-        add(discovered.browser, discovered.profile, discovered.profilePath);
+function normalizeCookieImportText(rawText) {
+    const text = String(rawText || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+    if (!text) {
+        throw new Error('请先选择或粘贴 cookies.txt 内容');
     }
-    add('edge', 'Default', '');
-    add('chrome', 'Default', '');
-    add('firefox', 'default-release', '');
-    return attempts;
+    if (Buffer.byteLength(text, 'utf8') > MAX_COOKIE_IMPORT_BYTES) {
+        throw new Error('Cookie 文件过大，请只导出需要的网站 Cookie');
+    }
+    return `${text}\n`;
 }
 
-function buildCookieRefreshSuccessMessage(cookiePath, attempt) {
-    const detail = attempt.profilePath
-        ? `${attempt.browser}:${attempt.profilePath}`
-        : `${attempt.browser}:${attempt.profile}`;
-    return `已更新 Cookie：${cookiePath}（来源 ${detail}）`;
+function countNetscapeCookieLines(text) {
+    return text.split(/\n/).filter(isNetscapeCookieLine).length;
 }
 
-function discoverCookieRefreshAttempts(config) {
-    const browser = normalizeBrowserName(config?.cookieAutoBrowser);
-    if (browser) {
-        return discoverBrowserProfiles(browser);
-    }
-
-    return [
-        ...discoverBrowserProfiles('edge'),
-        ...discoverBrowserProfiles('chrome'),
-        ...discoverBrowserProfiles('firefox')
-    ];
-}
-
-function discoverBrowserProfiles(browser) {
-    if (browser === 'edge' || browser === 'chrome') {
-        return discoverChromiumProfiles(browser);
-    }
-    if (browser === 'firefox') {
-        return discoverFirefoxProfiles();
-    }
-    return [];
-}
-
-function discoverChromiumProfiles(browser) {
-    const userDataDir = resolveChromiumUserDataDir(browser);
-    if (!userDataDir || !existsSync(userDataDir)) {
-        return [];
-    }
-
-    const profiles = [];
-    const knownProfiles = listDirectoryNames(userDataDir)
-        .filter((name) => /^Default$/i.test(name) || /^Profile \d+$/i.test(name) || /^Guest Profile$/i.test(name));
-
-    const localStateProfiles = readChromiumProfilesFromLocalState(userDataDir);
-    for (const profile of [...localStateProfiles, ...knownProfiles]) {
-        const profileDir = join(userDataDir, profile);
-        if (!existsSync(join(profileDir, 'Network', 'Cookies')) && !existsSync(join(profileDir, 'Cookies'))) {
-            continue;
-        }
-        profiles.push({
-            browser,
-            profile,
-            profilePath: ''
-        });
-    }
-
-    return profiles;
-}
-
-function resolveChromiumUserDataDir(browser) {
-    const localAppData = String(process.env.LOCALAPPDATA || '').trim();
-    if (!localAppData) return '';
-    if (browser === 'edge') {
-        return join(localAppData, 'Microsoft', 'Edge', 'User Data');
-    }
-    if (browser === 'chrome') {
-        return join(localAppData, 'Google', 'Chrome', 'User Data');
-    }
-    return '';
-}
-
-function readChromiumProfilesFromLocalState(userDataDir) {
-    const localStatePath = join(userDataDir, 'Local State');
-    if (!existsSync(localStatePath)) {
-        return [];
-    }
-
-    try {
-        const localState = JSON.parse(readFileSync(localStatePath, 'utf8'));
-        const entries = localState?.profile?.info_cache;
-        if (!entries || typeof entries !== 'object') {
-            return [];
-        }
-        return Object.keys(entries);
-    } catch (error) {
-        return [];
-    }
-}
-
-function discoverFirefoxProfiles() {
-    const appData = String(process.env.APPDATA || '').trim();
-    if (!appData) return [];
-    const profilesRoot = join(appData, 'Mozilla', 'Firefox', 'Profiles');
-    if (!existsSync(profilesRoot)) {
-        return [];
-    }
-
-    return listDirectoryNames(profilesRoot)
-        .filter((name) => existsSync(join(profilesRoot, name, 'cookies.sqlite')))
-        .map((name) => ({
-            browser: 'firefox',
-            profile: name,
-            profilePath: ''
-        }));
-}
-
-function listDirectoryNames(dirPath) {
-    try {
-        return readdirSync(dirPath)
-            .filter((name) => {
-                try {
-                    return statSync(join(dirPath, name)).isDirectory();
-                } catch (error) {
-                    return false;
-                }
-            });
-    } catch (error) {
-        return [];
-    }
-}
-
-function normalizeBrowserName(browser) {
-    const text = String(browser || '').trim().toLowerCase();
-    if (!text) return '';
-    if (text === 'msedge') return 'edge';
-    return text;
-}
-
-function buildCookiesFromBrowserSpec(browser, profile, profilePath) {
-    const parts = [String(browser || '').trim()];
-    const normalizedProfilePath = String(profilePath || '').trim();
-    const normalizedProfile = String(profile || '').trim();
-    if (normalizedProfilePath) parts.push(resolve(normalizedProfilePath));
-    else if (normalizedProfile) parts.push(normalizedProfile);
-    return parts.join(':');
-}
-
-function resolveCookieDatabasePath(attempt) {
-    if (!attempt || !attempt.browser) return '';
-    if (attempt.browser === 'edge' || attempt.browser === 'chrome') {
-        const userDataDir = resolveChromiumUserDataDir(attempt.browser);
-        if (!userDataDir) return '';
-        const profileName = String(attempt.profilePath || attempt.profile || 'Default').trim();
-        const profileDir = join(userDataDir, profileName);
-        const networkPath = join(profileDir, 'Network', 'Cookies');
-        if (existsSync(networkPath)) return networkPath;
-        return join(profileDir, 'Cookies');
-    }
-    if (attempt.browser === 'firefox') {
-        const appData = String(process.env.APPDATA || '').trim();
-        if (!appData) return '';
-        return join(appData, 'Mozilla', 'Firefox', 'Profiles', attempt.profile || 'default-release', 'cookies.sqlite');
-    }
-    return '';
-}
-
-function classifyCookieRefreshStatus(error) {
-    const message = safeError(error).toLowerCase();
-    if (message.includes('could not find') && message.includes('cookies database')) {
-        return 'missing_database';
-    }
-    if (message.includes('could not copy chrome cookie database')) {
-        return 'copy_database_failed';
-    }
-    if (message.includes('failed to decrypt with dpapi')) {
-        return 'dpapi_failed';
-    }
-    return 'command_failed';
-}
-
-function buildCookieRefreshRecommendation(error) {
-    const status = classifyCookieRefreshStatus(error);
-    if (status === 'missing_database') {
-        return '该 profile 下未找到 Cookies 数据库，建议重新选择存在的 profile，或改用手动 cookies.txt。';
-    }
-    if (status === 'copy_database_failed') {
-        return '这通常与浏览器占用或 yt-dlp 复制数据库失败有关。请先完全关闭浏览器后重试，若仍失败请改用手动 cookies.txt。';
-    }
-    if (status === 'dpapi_failed') {
-        return '这通常是 Windows/Chromium 解密限制。建议改用手动 cookies.txt 或外部导出工具，而不是继续依赖自动提取。';
-    }
-    return '自动提取失败，建议查看详细诊断并准备手动 cookies.txt 作为备用方案。';
-}
-
-function restoreCookieFile(cookiePath, previous) {
-    ensureParentDir(cookiePath);
-    writeFileSync(cookiePath, previous || '# Netscape HTTP Cookie File\n');
-}
-
-function hasUsableCookie(cookiePath) {
-    if (!existsSync(cookiePath)) return false;
-    const text = readFileSync(cookiePath, 'utf8');
-    return text.split(/\r?\n/).some((line) => line && !line.startsWith('#'));
+function isNetscapeCookieLine(line) {
+    const trimmed = String(line || '').trim();
+    if (!trimmed) return false;
+    const cookieLine = trimmed.startsWith('#HttpOnly_') ? trimmed.slice('#HttpOnly_'.length) : trimmed;
+    if (!cookieLine || cookieLine.startsWith('#')) return false;
+    const fields = cookieLine.split('\t');
+    if (fields.length < 7) return false;
+    return Boolean(fields[0] && fields[1] && fields[2] && fields[3] && fields[5]);
 }
 
 function validateDownloadContext(query) {
@@ -1409,6 +1148,9 @@ function runYtDlp(runtime, args, timeout, website) {
     const proxy = String(runtime.config.proxy || '').trim();
     if (proxy && website === 'y2b') {
         finalArgs.push('--proxy', proxy);
+    }
+    if (website === 'y2b') {
+        finalArgs.push('--js-runtimes', 'node');
     }
     if (existsSync(runtime.cookiePath)) {
         finalArgs.push('--cookies', runtime.cookiePath);
