@@ -2,4 +2,6 @@ node_modules/
 .runtime-tools/
 temp/
 cookies.txt
-.sisyphus/
+cookies*.txt
+.codegraph/
+.omo/
